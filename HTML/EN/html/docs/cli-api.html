@@ -44,7 +44,9 @@
 <hr>
 <h4 id="7.7">Changes starting from Squeezebox Server 7.7</h4>
 <ul>
-	<li>Extended <a href="#rescan">&quot;rescan&quot;</a> with optional singledir parameter</li>
+	<li>Extended <a href="#rescan">&quot;rescan&quot;</a> with optional singledir parameter.</li>
+	<li>Added <a href="#info total duration ?">"info total duration ?"</a> query to return the total number of seconds for the library.</li>
+	<li>Added DD parameter to the &quot;<a href="#status">status</a>&quot; query to report total playtime of the current queue.</li>
 </ul>
 
 
@@ -2619,6 +2621,9 @@ http://&lt;server&gt;:&lt;port&gt;/music/current/cover.jpg?player=&lt;playerid&g
 		<strong><code><a href="#info total songs ?">info total songs ?</a></code></strong>
 	</li>
 	<li>
+		<strong><code><a href="#info total duration ?">info total duration ?</a></code></strong>
+	</li>
+	<li>
 		<strong><code><a href="#genres">genres</a></code></strong>
 	</li>
 	<li>
@@ -2974,6 +2979,32 @@ http://&lt;server&gt;:&lt;port&gt;/music/current/cover.jpg?player=&lt;playerid&g
 		Request: &quot;info total songs ?&lt;LF&gt;&quot;
 		<br>
 		Response: &quot;info total songs 18&lt;LF&gt;&quot;
+	</p>
+</blockquote>
+
+<br>
+<p id="info total duration ?">
+	<strong>
+		<code>
+			info 
+			total 
+			duration 
+			?
+		</code>
+	</strong>
+</p>
+<p>
+	The &quot;info total duration ?&quot; query returns the number of seconds playtime
+	in the server music database.
+</p>
+<p>
+	Examples:
+</p>
+<blockquote>
+	<p>
+		Request: &quot;info total duration ?&lt;LF&gt;&quot;
+		<br>
+		Response: &quot;info total duration 66109&lt;LF&gt;&quot;
 	</p>
 </blockquote>
 
@@ -4806,7 +4837,7 @@ http://&lt;server&gt;:&lt;port&gt;/music/current/cover.jpg?player=&lt;playerid&g
 			artwork_url
 		</td>
 		<td>
-			A full URL to remote artwork.  Only available for certain plugins such as Pandora and Rhapsody.
+			A full URL to remote artwork.  Only available for certain online music services.
 		</td>
 	</tr>
 	<tr>
@@ -4828,7 +4859,7 @@ http://&lt;server&gt;:&lt;port&gt;/music/current/cover.jpg?player=&lt;playerid&g
 			info_link
 		</td>
 		<td>
-			A custom link to use for trackinfo. Only available for certain plugins such as Pandora.
+			A custom link to use for trackinfo. Only available for certain online music services.
 		</td>
 	</tr>
 	<tr>
@@ -7142,7 +7173,10 @@ in the saved playlists folder.</p>
 			by a letter (see command 
 			&quot;<a href="#songinfo">songinfo</a>&quot; for a list of possible
 			fields and their identifying letter). The default tags value for 
-			this query is &quot;gald&quot;.
+			this query is &quot;gald&quot;. In addition to the tags supported by 
+			&quot;<a href="#songinfo">songinfo</a>&quot; there's the special "DD"
+			tag, which would return no track information, but the total duration
+			of the current playlist only. 
 		</td>
 	</tr>
 	<tr>
@@ -7384,6 +7418,15 @@ in the saved playlists folder.</p>
 		</td>
 		<td>
 			Only for Squeezebox1 players.
+		</td>
+	</tr>
+	<tr>
+		<td>
+			&nbsp;&nbsp;playlist duration
+		</td>
+		<td>
+			Duration of the full playlist. Decimal seconds. Only if tag:DD was requested
+			and for the duration of tracks where it is known (it is not for eg. radio streams).
 		</td>
 	</tr>
 	<tr>
@@ -8271,7 +8314,7 @@ can be set/queried using the <a href="#playerpref">playerpref command</a>.</p>
 		<strong><code><a href="#radios">apps</a></code></strong>
 	</li>
 	<li>
-		<strong><a href="#XMLBrowser">Live Music Archive, Live365, MP3tunes, Pandora, Podcasts, RadioIO, RadioTime, Rhapsody, Shoutcast, SIRIUS, Staff Picks, RSS</a></strong>
+		<strong><a href="#XMLBrowser">Live Music Archive, Live365, MP3tunes, Pandora, Podcasts, RadioTime, Napster, Shoutcast, Staff Picks, RSS</a></strong>
 	</li>
 	<li>
 		<strong><a href="#Favorites">Favorites</a></strong>
@@ -8357,8 +8400,8 @@ can be set/queried using the <a href="#playerpref">playerpref command</a>.</p>
 		</td>
 		<td>
 			Command, one of &quot;lma&quot;, &quot;live365&quot;, &quot;mp3tunes&quot;,
-			&quot;pandora&quot;, &quot;podcast&quot;, &quot;radioio&quot;, 
-			&quot;radiotime&quot;,  &quot;rhapsodydirect&quot;, &quot;shoutcast&quot;, &quot;sirius&quot;
+			&quot;pandora&quot;, &quot;podcast&quot;, 
+			&quot;radiotime&quot;,  &quot;rhapsodydirect&quot;, &quot;shoutcast&quot;, &quot;
 			or &quot;picks&quot;, or any other, additionally installed radio or music service
 			type plugin. Item delimiter. <br>
 			This corresponds to the respective queries below.
@@ -8419,13 +8462,13 @@ can be set/queried using the <a href="#playerpref">playerpref command</a>.</p>
 
 <br>
 <h3 id="XMLBrowser">
-	Live Music Archive, Live365, MP3tunes, Pandora, Podcasts, RadioIO, RadioTime, Rhapsody, Shoutcast, SIRIUS, Staff Picks, RSS
+	Live Music Archive, Live365, MP3tunes, Pandora, Podcasts, RadioTime, Napster, Shoutcast, Staff Picks, RSS
 </h3>
 <p>
 	<strong>
 		<code>
 			&lt;playerid&gt;
-			&lt;lma|live365|mp3tunes|pandora|podcast|radioio|radiotime|rhapsodydirect|shoutcast|sirius|picks|rss&gt;
+			&lt;lma|live365|mp3tunes|pandora|podcast|radiotime|rhapsodydirect|shoutcast|picks|rss&gt;
 			items
 			&lt;start&gt;
 			&lt;itemsPerResponse&gt;
@@ -8618,7 +8661,7 @@ can be set/queried using the <a href="#playerpref">playerpref command</a>.</p>
 	<strong>
 		<code>
 			&lt;playerid&gt;
-			&lt;lma|live365|mp3tunes|pandora|podcast|radioio|radiotime|rhapsodydirect|shoutcast|picks|rss&gt;
+			&lt;lma|live365|mp3tunes|pandora|podcast|radiotime|rhapsodydirect|shoutcast|picks|rss&gt;
 			playlist
 			&lt;play|load|insert|add&gt;
 			&lt;taggedParameters&gt;

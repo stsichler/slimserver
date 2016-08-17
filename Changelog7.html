@@ -10,6 +10,7 @@
 	<ul>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18092">#18092</a> - albums command with sort:new included returns no entries</li>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18097">#18097</a> - web issues using Perl 5.20: dropdowns/file browsers not populating due to Compress::Raw::Zlib incompatibility</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18139">#18139</a> - BBC Podcast OPML listing fails to parse</li>
 		<li>Use a favourite's icon as the station artwork if available.</li>
 	</ul>
 	<br />
@@ -85,13 +86,26 @@
 <ul>
 	<li>Server Changes:</li>
 	<ul>
+		<li>Migrate our WiMP implementation to the TIDAL branding and service.</li>
+		<li>Change Napster implementation to use AAC instead of MP3.</li>
+		<li>Improve compatibility with latest iTunes 12 updates.</li>
 		<li>Limit the number of items to be added in RandomPlay. Large numbers would cause database errors.</li>
+		<li>Remove defunct Last.fm, SiriusXM and RadioIO plugins.</li>
+		<li>Rename Rhapsody to Napster.</li>
 	</ul>
 	<br />
-
+	
+	<li>Platform Support:</li>
+	<ul>
+		<li>Improve support for latest Mac OSX 10.11 El Capitan and Windows 10.</li>
+	</ul>
+	<br />
+	
 	<li>Bug Fixes:</li>
 	<ul>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17727">#17727</a> - Playback stops with mp3 + cue sheets combination</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17901">#17901</a> - "Some settings were changed. Do you want to save them?" doesn't honor button clicked.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18078">#18078</a> - All files seen as changed after Daylight Saving time change (Windows only)</li>
 	</ul>
 	<br />
 </ul>
