@@ -64,24 +64,25 @@ sub read {
 		
 		# If the line is not a filename (starts with #), handle encoding
 		# If it's a filename, accept it as raw bytes
-		if ( $entry =~ /^#/ ) {
-			# decode any HTML entities in-place
-			HTML::Entities::decode_entities($entry);
+#		if ( $entry =~ /^#/ ) {
+#			# decode any HTML entities in-place
+#			HTML::Entities::decode_entities($entry);
+#
+#			# Guess the encoding of each line in the file. Bug 1876
+#			# includes a playlist that has latin1 titles, and utf8 paths.
+#			my $enc = Slim::Utils::Unicode::encodingFromString($entry);
+#
+#			# Only strip the BOM off of UTF-8 encoded bytes. Encode will
+#			# handle UTF-16
+#			if (!$foundBOM && $enc eq 'utf8') {
+#
+#				$entry = Slim::Utils::Unicode::stripBOM($entry);
+#				$foundBOM = 1;
+#			}
 
-			# Guess the encoding of each line in the file. Bug 1876
-			# includes a playlist that has latin1 titles, and utf8 paths.
-			my $enc = Slim::Utils::Unicode::encodingFromString($entry);
-
-			# Only strip the BOM off of UTF-8 encoded bytes. Encode will
-			# handle UTF-16
-			if (!$foundBOM && $enc eq 'utf8') {
-
-				$entry = Slim::Utils::Unicode::stripBOM($entry);
-				$foundBOM = 1;
-			}
-
-			$entry = Slim::Utils::Unicode::utf8decode_guess($entry, $enc);
-		}
+#			$entry = Slim::Utils::Unicode::utf8decode_guess($entry, $enc);
+			$entry = Slim::Utils::Unicode::utf8decode($entry, 'cp1252');
+#		}
 
 		main::DEBUGLOG && $log->debug("  entry from file: $entry");
 
@@ -250,8 +251,8 @@ sub write {
 	my $string = '';
 	my $output = $class->_filehandleFromNameOrString($filename, \$string) || return;
 
-	print $output "#CURTRACK $resumetrack\n" if defined($resumetrack);
-	print $output "#EXTM3U\n" if $addTitles;
+	print $output "#CURTRACK $resumetrack\r\n" if defined($resumetrack);
+	print $output "#EXTM3U\r\n" if $addTitles;
 
 	my $i = 0;
 	for my $item (@{$listref}) {
@@ -265,7 +266,7 @@ sub write {
 		};
 		
 		# Bug 16683: put the 'file:///' URL in an extra extension
-		print $output "#EXTURL:", $track->url, "\n";
+		#print $output "#EXTURL:", $track->url, "\r\n";
 
 		if ($addTitles) {
 			
@@ -273,16 +274,17 @@ sub write {
 			my $secs = int($track->secs || -1);
 
 			if ($title) {
-				print $output "#EXTINF:$secs,$title\n";
+				print $output "#EXTINF:$secs,$title\r\n";
 			}
 		}
 		
+		
 		my $path = Slim::Utils::Unicode::utf8decode_locale( $class->_pathForItem($track->url) );
-		print $output $path, "\n";
+		print $output $path, "\r\n\r\n";
 		
 		main::idleStreams() if ! (++$i % 20);
 	}
-
+ 
 	close $output if $filename;
 
 	return $string;
