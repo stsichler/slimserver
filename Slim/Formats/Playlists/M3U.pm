@@ -143,7 +143,7 @@ sub read {
 		
 		if ($class->playlistEntryIsValid($trackurl, $url)) {
 
-			push @items, $class->_item($trackurl, $artist, $album, $title, $secs);
+			push @items, $class->_item($trackurl, $artist, $album, $title, $secs, $url);
 
 		}
 		else {
@@ -155,7 +155,7 @@ sub read {
 				
 				if ($class->playlistEntryIsValid($trackurl, $url)) {
 
-					push @items, $class->_item($trackurl, $artist, $album, $title, $secs);
+					push @items, $class->_item($trackurl, $artist, $album, $title, $secs, $url);
 					
 					last;
 				}
@@ -176,7 +176,7 @@ sub read {
 }
 
 sub _item {
-	my ($class, $trackurl, $artist, $album, $title, $secs) = @_;
+	my ($class, $trackurl, $artist, $album, $title, $secs, $playlistUrl) = @_;
 
 	main::DEBUGLOG && $log->debug("    valid entry: $trackurl");
 	
@@ -185,7 +185,7 @@ sub _item {
 		'ALBUM'  => $album,
 		'ARTIST' => $artist,
 		'SECS'   => ( defined $secs && $secs > 0 ) ? $secs : undef,
-	} );
+	}, $playlistUrl );
 }
 
 sub readCurTrackForM3U {
@@ -264,8 +264,14 @@ sub write {
 		my $track = Slim::Schema->objectForUrl($item);
 	
 		if (!blessed($track) || !$track->can('title')) {
+			
+			if ( Slim::Music::Info::isURL($item) && $item !~ /^file:/ ) {
+				print $output $item, "\n";
+			}
+			else {
+				logError("Couldn't retrieve objectForUrl: [$item] - skipping!");
+			}
 	
-			logError("Couldn't retrieve objectForUrl: [$item] - skipping!");
 			next;
 		};
 		

@@ -67,6 +67,9 @@ sub find {
 			$args->{recursive} ? Slim::Utils::Misc::folderFilter($File::Next::dir, 0, $types)
 			                   : 0
 		},
+		error_handler => sub { 
+			$log->error('Error scanning file or folder: ', shift)
+		},
 	}, $path );
 	
 	my $walk = sub {
@@ -142,6 +145,8 @@ sub find {
 		}
 		
 		$file = File::Spec->canonpath($file);
+		
+		main::DEBUGLOG && $log->is_debug && $log->debug("Found $file");
 		
 		$count++;
 		

@@ -14,6 +14,7 @@ use FileHandle;
 use Path::Class ();
 use Scalar::Util qw(blessed);
 
+use Slim::Formats::Playlists;
 use Slim::Utils::Misc ();
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
@@ -27,8 +28,11 @@ use constant PENDING_CHANGED => 0x04;
 # If more than this many items are changed during a scan, the database is optimized
 use constant OPTIMIZE_THRESHOLD => 100;
 
-# Number of items to process at once, this value will affect the max size of the WAL file
-use constant CHUNK_SIZE => 50;
+use constant IS_SQLITE => (Slim::Utils::OSDetect->getOS()->sqlHelperClass() =~ /SQLite/ ? 1 : 0);
+
+# Number of items to process at once, this value will affect the max size of the WAL file.
+# Chunking is only required with SQLite, as we don't have this kind of concurrency problem with MySQL.
+use constant CHUNK_SIZE => IS_SQLITE ? 50 : 1000;
 
 my $log   = logger('scan.scanner');
 my $prefs = preferences('server');
@@ -147,6 +151,9 @@ sub rescan {
 	# Strip trailing slashes
 	$next =~ s{/$}{};
 	
+	# don't continue if our path is empty!
+	return unless $next;
+	
 	main::DEBUGLOG && $log->is_debug && $log->debug("Rescanning $next");
 	
 	$pending{$next} = 0;
@@ -171,16 +178,19 @@ sub rescan {
 		$pluginHandlers = Slim::Utils::Scanner::API->getHandlers();
 	}
 	
-	$log->error("Discovering audio files in $next");
+	$log->error("Discovering audio files in $next") unless main::SCANNER && $main::progress;
 	
 	# Keep track of the number of changes we've made so we can decide
 	# if we should optimize the database or not, and also so we know if
 	# we need to udpate lastRescanTime
 	my $changes = 0;
+	my $ctFilter = $args->{types} eq 'list' ? "= 'ssp'" : "!= 'dir'";
 	
 	# Get list of files within this path
 	Slim::Utils::Scanner::Local->find( $next, $args, sub {
 		my $count  = shift;
+		
+		$log->error("Start processing found tracks") unless main::SCANNER && $main::progress;
 		
 		# Save any other dirs we need to scan (shortcuts/aliases)
 		my $others = shift || [];
@@ -188,8 +198,10 @@ sub rescan {
 		
 		my $basedir = Slim::Utils::Misc::fileURLFromPath($next);
 		
+		$log->error("Connect do DB") unless main::SCANNER && $main::progress;
 		my $dbh = Slim::Schema->dbh;
 		
+		$log->error("Get latest ID") unless main::SCANNER && $main::progress;
 		# Use the most recent existing track ID to prevent paged onDiskOnly query
 		# from missing any files. This will be 0 during a wipe
 		my ($maxTrackId) = $dbh->selectrow_array('SELECT MAX(id) FROM tracks');
@@ -208,20 +220,29 @@ sub rescan {
 			)
 			AND             url LIKE '$basedir%'
 			AND             virtual IS NULL
-			AND             content_type != 'dir'
-		};
+			AND             content_type $ctFilter
+		} . (IS_SQLITE ? '' : ' ORDER BY url');
 		
+		$log->error("Delete temporary table if exists") unless main::SCANNER && $main::progress;
 		# 2. Files that are new and not in the database.
+		$dbh->do('DROP TABLE IF EXISTS diskonly');
+		$log->error("Re-build temporary table") unless main::SCANNER && $main::progress;
+    	$dbh->do( qq{
+    		CREATE TEMPORARY TABLE diskonly AS 
+				SELECT          DISTINCT(url) as url
+				FROM            scanned_files
+				WHERE           url NOT IN (
+					SELECT url FROM tracks
+					WHERE id <= $maxTrackId
+				)
+				AND             url LIKE '$basedir%'
+				AND             filesize != 0
+    	} );
+
 		my $onDiskOnlySQL = qq{
-			SELECT DISTINCT(url)
-			FROM            scanned_files
-			WHERE           url NOT IN (
-				SELECT url FROM tracks
-				WHERE id <= $maxTrackId
-			)
-			AND             url LIKE '$basedir%'
-			AND             filesize != 0
-		};
+			SELECT          url
+			FROM            diskonly
+		} . (IS_SQLITE ? '' : ' ORDER BY url');
 		
 		# 3. Files that have changed mtime or size.
 		# XXX can this query be optimized more?
@@ -235,10 +256,10 @@ sub rescan {
 					OR
 					scanned_files.filesize != tracks.filesize
 				)
-				AND tracks.content_type != 'dir'
+				AND tracks.content_type $ctFilter
 			)
 			WHERE scanned_files.url LIKE '$basedir%'
-		};
+		} . (IS_SQLITE ? '' : ' ORDER BY scanned_files.url');
 
 		# bug 18078 - Windows doesn't handle DST changes in a file's timestamp correctly. We need to do this on our end.
 		if ( main::ISWINDOWS && !(main::SCANNER && $main::wipe) ) {
@@ -254,19 +275,23 @@ sub rescan {
 			}
 		}
 		
+		$log->error("Get deleted tracks count") unless main::SCANNER && $main::progress;
 		# only remove missing tracks when looking for audio tracks
 		my $inDBOnlyCount = 0;
 		($inDBOnlyCount) = $dbh->selectrow_array( qq{
 			SELECT COUNT(*) FROM ( $inDBOnlySQL ) AS t1
-		} ) if $args->{types} =~ /audio/;
+		} ) if !(main::SCANNER && $main::wipe) && $args->{types} =~ /audio|list/;
     	
+		$log->error("Get new tracks count") unless main::SCANNER && $main::progress;
 		my ($onDiskOnlyCount) = $dbh->selectrow_array( qq{
 			SELECT COUNT(*) FROM ( $onDiskOnlySQL ) AS t1
 		} );
 		
-		my ($changedOnlyCount) = $dbh->selectrow_array( qq{
+		$log->error("Get changed tracks count") unless main::SCANNER && $main::progress;
+		my $changedOnlyCount = 0;
+		($changedOnlyCount) = $dbh->selectrow_array( qq{
 			SELECT COUNT(*) FROM ( $changedOnlySQL ) AS t1
-		} );
+		} ) if !(main::SCANNER && $main::wipe);
 		
 		$log->error( "Removing deleted audio files ($inDBOnlyCount)" ) unless main::SCANNER && $main::progress;
 		
@@ -394,6 +419,8 @@ sub rescan {
 					my $more = 1;
 					
 					if ( !$onDiskOnlySth->rows ) {
+						$dbh->do('DROP TABLE IF EXISTS diskonly');
+						
 						if ( !$args->{no_async} ) {
 							$args->{paths} = $paths;
 							markDone( $next => PENDING_NEW, $changes, $args );
@@ -517,16 +544,18 @@ sub rescan {
 				else {
 					markDone( undef, undef, $changes, $args );
 
-					Slim::Music::Import->setIsScanning(0);
-			
-					if ( my $handler = $pluginHandlers->{onFinishedHandler} ) {
-						$handler->(0);
-					}
-			
-					Slim::Control::Request::notifyFromArray( undef, [ 'rescan', 'done' ] );
-			
-					if ( $args->{onFinished} ) {
-						$args->{onFinished}->();
+					if (main::SCANNER) {
+						Slim::Music::Import->setIsScanning(0);
+				
+						if ( my $handler = $pluginHandlers->{onFinishedHandler} ) {
+							$handler->(0);
+						}
+				
+						Slim::Control::Request::notifyFromArray( undef, [ 'rescan', 'done' ] );
+				
+						if ( $args->{onFinished} ) {
+							$args->{onFinished}->();
+						}
 					}
 				}
 			}
@@ -536,7 +565,7 @@ sub rescan {
 	# Continue scanning if we had more paths
 	if ( $args->{no_async} ) {	
 		if ( @{$paths} && !Slim::Music::Import->hasAborted() ) {
-			$class->rescan( $paths, $args );
+			$changes += $class->rescan( $paths, $args );
 		}
 			
 		if ( !main::SCANNER ) {
@@ -581,33 +610,65 @@ sub deleted {
 	my $content_type = _content_type($url);
 	
 	if ( Slim::Music::Info::isSong($url, $content_type) ) {
-		$log->error("Handling deleted audio file $url") unless main::SCANNER && $main::progress;
+		$log->warn("Handling deleted audio file $url") unless main::SCANNER && $main::progress;
 
 		# XXX no DBIC objects
 		my $track = Slim::Schema->rs('Track')->search( url => $url )->single;
 		
 		if ( $track ) {
 			$work = sub {
+				my $trackId  = $track->id;
 				my $album    = $track->album;
-				my @contribs = $track->contributors->all;
+
+				my $sth = $dbh->prepare_cached( qq{
+					SELECT DISTINCT(contributor) FROM contributor_track
+					WHERE track = ?
+				} );
+				$sth->execute( $trackId );
+				my $contribs = $sth->fetchall_arrayref();
+
 				my $year     = $track->year;
-				my @genres   = map { $_->id } $track->genres;
+
+				$sth = $dbh->prepare_cached( qq{
+					SELECT DISTINCT(genre) FROM genre_track
+					WHERE track = ?
+				} );
+				$sth->execute( $trackId );
+				my @genres = map { $_->[0] } @{ $sth->fetchall_arrayref()};
 				
 				# plugin hook
 				if ( my $handler = $pluginHandlers->{onDeletedTrackHandler} ) {
-					$handler->( { id => $track->id, obj => $track, url => $url } );
+					$handler->( { id => $trackId, obj => $track, url => $url } );
 				}
 		
-				# delete() will cascade to:
-				#   contributor_track
-				#   genre_track
-				#   comments
-				$track->delete;
+				$sth = $dbh->prepare_cached( qq{
+					DELETE FROM contributor_track
+					WHERE track = ?
+				} );
+				$sth->execute( $trackId );
+
+				$sth = $dbh->prepare_cached( qq{
+					DELETE FROM genre_track
+					WHERE track = ?
+				} );
+				$sth->execute( $trackId );
+
+				$sth = $dbh->prepare_cached( qq{
+					DELETE FROM comments
+					WHERE track = ?
+				} );
+				$sth->execute( $trackId );
+
+				$sth = $dbh->prepare_cached( qq{
+					DELETE FROM tracks
+					WHERE id = ?
+				} );
+				$sth->execute( $trackId );
 			
 				# Tell Contributors to rescan, if no other tracks left, remove contributor.
 				# This will also remove entries from contributor_track and contributor_album
-				for my $contrib ( @contribs ) {
-					Slim::Schema::Contributor->rescan( $contrib->id );
+				for ( @$contribs ) {
+					Slim::Schema::Contributor->rescan( $_->[0] );
 				}
 
 				
@@ -891,9 +952,7 @@ sub changed {
 				JOIN   albums ON (tracks.album = albums.id)
 				WHERE  tracks.url = ?
 			} );
-			$sth->execute($url);
-			my $origTrack = $sth->fetchrow_hashref;
-			$sth->finish;
+			my $origTrack = $dbh->selectrow_hashref($sth, undef, $url);
 			
 			my $orig = {
 				year => $origTrack->{year},
@@ -903,18 +962,14 @@ sub changed {
 			$sth = $dbh->prepare_cached( qq{
 				SELECT DISTINCT(contributor) FROM contributor_track WHERE track = ?
 			} );
-			$sth->execute( $origTrack->{id} );
-			$orig->{contribs} = $sth->fetchall_arrayref( {} );
-			$sth->finish;
+			$orig->{contribs} = $dbh->selectall_arrayref( $sth, { Slice => {} }, $origTrack->{id} );
 			
 			# Fetch all genres used on the original track
 			$sth = $dbh->prepare_cached( qq{
 				SELECT genre FROM genre_track WHERE track = ?
 			} );
-			$sth->execute( $origTrack->{id} );
-			$orig->{genres} = $sth->fetchall_arrayref( {} );
-			$sth->finish;
-			
+			$orig->{genres} = $dbh->selectall_arrayref( $sth, { Slice => {} }, $origTrack->{id} );
+
 			# Scan tags & update track row
 			# XXX no DBIC objects
 			my $track = Slim::Schema->updateOrCreate( {
@@ -989,14 +1044,14 @@ sub changed {
 			my $newGenres  = join( ',', sort map { $_->id } $track->genres );
 			
 			if ( $origGenres ne $newGenres ) {
-				main::DEBUGLOG && $isDebug && $log->debug( "Rescanning changed genre(s) $origGenres -> $newGenres" );
+				$isDebug && $log->debug( "Rescanning changed genre(s) $origGenres -> $newGenres" );
 				
 				Slim::Schema::Genre->rescan( map { $_->{genre} } @{ $orig->{genres} } );
 			}
 			
 			# Bug 8034, Rescan years if year value changed, to remove the old year
 			if ( $orig->{year} != $track->year ) {
-				main::DEBUGLOG && $isDebug && $log->debug( "Rescanning changed year " . $orig->{year} . " -> " . $track->year );
+				$isDebug && $log->debug( "Rescanning changed year " . $orig->{year} . " -> " . $track->year );
 				
 				Slim::Schema::Year->rescan( $orig->{year} );
 			}
@@ -1089,7 +1144,7 @@ sub markDone {
 				$changes += _getChangeCount();
 				if ( $changes >= OPTIMIZE_THRESHOLD ) {
 					main::DEBUGLOG && $log->is_debug && $log->debug("Scan change count reached $changes, optimizing database");
-					Slim::Schema->optimizeDB();
+					Slim::Schema->optimizeDB() if main::SCANNER;		# in the standalone scanner optimize will always be run at the end
 					_setChangeCount(0);
 				}
 				else {
@@ -1166,7 +1221,7 @@ sub scanPlaylistFileHandle {
 
 		$playlist->title($title);
 		$playlist->titlesort( Slim::Utils::Text::ignoreCaseArticles( $title ) );
-		$playlist->titlesearch( Slim::Utils::Text::ignoreCaseArticles( $title, 1 ) );
+		$playlist->titlesearch( Slim::Utils::Text::ignoreCase( $title, 1 ) );
 	}
 
 	# With the special url if the playlist is in the

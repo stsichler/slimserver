@@ -1,8 +1,6 @@
 package Slim::Networking::SimpleAsyncHTTP;
 
-# $Id$
-
-# Logitech Media Server Copyright 2003-2011 Logitech.
+# Logitech Media Server Copyright 2003-2016 Logitech.
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License, 
 # version 2.
@@ -44,12 +42,6 @@ BEGIN {
 	
 	sub hasZlib {
 		return $hasZlib if defined $hasZlib;
-		
-		if ( main::SLIM_SERVICE ) {
-			# Disable gzip overhead on SN
-			$hasZlib = 0;
-			return;
-		}
 		
 		$hasZlib = 0;
 		eval { 
@@ -149,10 +141,19 @@ sub _createHTTPRequest {
 	}
 	
 	# If cached, add If-None-Match and If-Modified-Since headers
-	if ( my $data = $self->cachedResponse ) {			
+	my $data = $self->cachedResponse;
+	if ( $data && ref $data && $data->{headers} ) {
+		# gzip encoded results come with a -gzip postfix which needs to be removed, or the etag would not match
+		my $etag = $data->{headers}->header('ETag') || undef;
+		$etag =~ s/-gzip// if $etag;
+
+		# if the last_modified value is a UNIX timestamp, convert it
+		my $lastModified = $data->{headers}->last_modified || undef;
+		$lastModified = HTTP::Date::time2str($lastModified) if $lastModified && $lastModified !~ /\D/;
+
 		unshift @_, (
-			'If-None-Match'     => $data->{headers}->header('ETag') || undef,
-			'If-Modified-Since' => $data->{headers}->last_modified || undef,
+			'If-None-Match'     => $etag,
+			'If-Modified-Since' => $lastModified
 		);
 	}
 
@@ -167,10 +168,6 @@ sub _createHTTPRequest {
 	my $lang;
 	if ( $client ) {
 		$lang = $client->languageOverride(); # override from comet request
-		
-		if ( main::SLIM_SERVICE ) {
-			$lang ||= $prefs->client($client)->get('language');
-		}
 	}
 
 	$lang ||= $prefs->get('language') || 'en';
@@ -373,7 +370,7 @@ sub _cacheKey {
 	my $cachekey = $url;
 	
 	if ($client) {
-		$cachekey .= '-' . (main::SLIM_SERVICE ? $client->language : $client->languageOverride);
+		$cachekey .= '-' . ($client->languageOverride || '');
 	}
 	
 	return $cachekey;

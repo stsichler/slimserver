@@ -632,7 +632,7 @@ SqueezeJS.SonginfoParser = {
 				title = result.playlist_loop[0].title;
 
 			else
-				title = (result.playlist_loop[0].disc ? result.playlist_loop[0].disc + '-' : '')
+				title = (result.playlist_loop[0].disc && result.playlist_loop[0].disccount > 1 ? result.playlist_loop[0].disc + '-' : '')
 						+ (result.playlist_loop[0].tracknum ? result.playlist_loop[0].tracknum + ". " : '')
 						+ result.playlist_loop[0].title;
 
@@ -683,9 +683,13 @@ SqueezeJS.SonginfoParser = {
 		if (result.playlist_tracks > 0) {
 			for (var x = 0; x < contributorRoles.length; x++) {
 				if (result.playlist_loop[0][contributorRoles[x]]) {
-					var contributors = result.playlist_loop[0][contributorRoles[x]].split(', ');
 					var ids = result.playlist_loop[0][contributorRoles[x] + '_ids'] ? result.playlist_loop[0][contributorRoles[x] + '_ids'].split(', ') : new Array();
-	
+
+					// Don't split the artist name if we only have a single id. Or Earth would no longer play with Wind & Fire.
+					var contributors = ids.length != 1
+						? result.playlist_loop[0][contributorRoles[x]].split(', ')
+						: new Array(result.playlist_loop[0][contributorRoles[x]]);
+
 					for (var i = 0; i < contributors.length; i++) {
 						// only add to the list if it's not already in there
 						if (!currentContributors[contributors[i]]) {
@@ -725,7 +729,7 @@ SqueezeJS.SonginfoParser = {
 	bitrate : function(result){
 		var bitrate = '';
 
-		if (result.playlist_tracks > 0 && result.playlist_loop[0].bitrate && result.remote) {
+		if (result.playlist_tracks > 0 && result.playlist_loop[0].bitrate) {
 			bitrate = result.playlist_loop[0].bitrate
 				+ (result.playlist_loop[0].type
 					? ', ' + result.playlist_loop[0].type
@@ -749,7 +753,10 @@ SqueezeJS.SonginfoParser = {
 				link = result.playlist_loop[0].info_link || 'songinfo.html';
 			}
 		}
-
+		
+		if (coverart.search(/^http/) == -1 && coverart.search(/^\//) == -1)
+			coverart = webroot + coverart;
+		
 		return this.tpl[((noLink || id == null || id < 0) ? 'raw' : 'linked')].coverart.apply({
 			id: id,
 			src: coverart,

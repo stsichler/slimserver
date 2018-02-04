@@ -132,7 +132,7 @@ sub loadTypesConfig {
 					
 					foreach my $mimeType (@mimeTypes) {
 						next if ($mimeType eq '-');
-						$mimeTypes{$mimeType} = $type;
+						$mimeTypes{lc($mimeType)} = $type;
 					}
 
 					foreach my $slimType (@slimTypes) {
@@ -690,8 +690,8 @@ sub standardTitle {
 	my $meta      = shift; # optional remote metadata to format
 	my $format    = shift; # caller may specify format 
 	
-	# Short-circuit if we have metadata or are on SN
-	if ( $meta || main::SLIM_SERVICE ) {
+	# Short-circuit if we have metadata
+	if ( $meta ) {
 		my $format = standardTitleFormat($client) || 'TITLE';
 		return displayText($client, undef, $format, $meta);
 	}
@@ -1129,6 +1129,26 @@ sub isRemoteURL {
 	return 0;
 }
 
+sub isVolatileURL {
+	my $url = shift || return 0;
+	
+	return 1 if $url =~ /^tmp:/;
+}
+
+sub isVolatile {
+	my $urlOrObj = shift || return 0;
+	
+	return 1 if isVolatileURL($urlOrObj);
+	
+	# $urlOrObj is a protocol handler
+	return 1 if $urlOrObj =~ /::/ && $urlOrObj->isa('Slim::Player::Protocols::Volatile');
+	
+	# $urlOrObj is a track object
+	return 1 if blessed($urlOrObj) && $urlOrObj->can('url') && isVolatileURL($urlOrObj->url);
+	
+	return 0;
+}
+
 # Only valid for the current playing song
 sub canSeek {
 	my ($client, $playingSong) = @_;
@@ -1431,7 +1451,7 @@ sub mimeToType {
 sub contentType { 
 	my $url = shift;
 
-	return Slim::Schema->contentType($url); 
+	return Slim::Schema->contentType($url) || '';
 }
 
 sub typeFromSuffix {

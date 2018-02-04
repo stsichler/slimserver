@@ -28,7 +28,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Strings qw(string);
 use Slim::Utils::Unicode;
 
-our ($elemstring, @elements, $elemRegex, %parsedFormats, $nocacheRegex, @noCache);
+our ($elemstring, @elements, $elemRegex, %parsedFormats, $nocacheRegex, @noCache, %formatCache, $externalFormats);
 
 my $log = logger('database.info');
 
@@ -55,8 +55,18 @@ sub init {
 		};
 	}
 	
-	# Our documentation says this was "CT", but we actually register "CONTENT_TYPE"
-	$parsedFormats{'CT'} = $parsedFormats{'CONTENT_TYPE'};
+	# localize content type where possible
+	$parsedFormats{'CT'} = sub {
+		my $output = $parsedFormats{'CONTENT_TYPE'}->(@_);
+		
+		if (!$output && ref $_[0] eq 'HASH' ) {
+			$output = $_[0]->{ct} || $_[0]->{ 'tracks.ct' } || '';
+		}
+		
+		$output = Slim::Utils::Strings::getString( uc($output) ) if $output;
+		
+		return $output;
+	};
 
 	# Override album
 	$parsedFormats{'ALBUM'} = sub {
@@ -67,7 +77,7 @@ sub init {
 
 		my $output = '';
 		$output = $_[0]->albumname();
-		$output = '' if $output eq string('NO_ALBUM');
+		$output = '' if !defined($output) || $output eq string('NO_ALBUM');
 
 		return (defined $output ? $output : '');
 	};
@@ -114,17 +124,17 @@ sub init {
 		my $disc = $_[0]->disc;
 
 		if ($disc && $disc == 1) {
+			
+			my $albumDiscc_sth = Slim::Schema->dbh->prepare_cached("SELECT discc FROM albums WHERE id = ?");
 
-			my $album = $_[0]->album;
+			$albumDiscc_sth->execute($_[0]->albumid);
 
-			if ($album) {
+			my ($discc) = $albumDiscc_sth->fetchrow_array;
+			$albumDiscc_sth->finish;
 
-				my $discc = $album->discc;
-
-				# suppress disc when only 1 disc in set
-				if (!$discc || $discc < 2) {
-					$disc = '';
-				}
+			# suppress disc when only 1 disc in set
+			if (!$discc || $discc < 2) {
+				$disc = '';
 			}
 		}
 
@@ -235,7 +245,7 @@ sub init {
 	# duration - already formatted for local tracks, but often seconds only for remote tracks
 	$parsedFormats{'DURATION'} = sub {
 		if ( ref $_[0] eq 'HASH' ) {
-			my $duration = $_[0]->{duration} || $_[0]->{'tracks.duration'} || '';
+			my $duration = $_[0]->{duration} || $_[0]->{'tracks.duration'} || $_[0]->{'secs'} || '';
 			
 			# format if we got a number only
 			return sprintf('%s:%02s', int($duration / 60), $duration % 60) if $duration * 1 eq $duration;
@@ -421,6 +431,9 @@ sub addFormat {
 	my $formatSubRef = shift;
 	my $nocache = shift;
 
+	my ($package) = caller();
+	$externalFormats->{$format}++ if $package !~ /^Slim/;
+	
 	# only add format if it is not already defined
 	if (!defined $parsedFormats{$format}) {
 
@@ -448,6 +461,12 @@ sub addFormat {
 	}
 
 	return 1;
+}
+
+# some 3rd party plugins register their own format handlers
+# this method can tell a caller whether we have such external formatters
+sub externalFormats {
+	return [ keys %$externalFormats ];
 }
 
 my %endbrackets = (
@@ -624,11 +643,17 @@ sub infoFormat {
 	# Bug: 1146 - Users can input strings in any locale - we need to convert that to
 	# UTF-8 first, otherwise perl will segfault in the nasty regex below.
 	if ($str && $] > 5.007) {
+		
+		my $old = $str;
+		if ( !($str = $formatCache{$old}) ) {
+			$str = $old;
+			eval {
+				Encode::from_to($str, Slim::Utils::Unicode::currentLocale(), 'UTF-8');
+				$str = Encode::decode('UTF-8', $str);
+			};
+			$formatCache{$old} = $str;
+		}
 
-		eval {
-			Encode::from_to($str, Slim::Utils::Unicode::currentLocale(), 'UTF-8');
-			$str = Encode::decode('UTF-8', $str);
-		};
 
 	} elsif (!defined $str) {
 

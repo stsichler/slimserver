@@ -115,7 +115,7 @@ sub initDetails {
 sub initSearchPath {
 	my $class = shift;
 
-	$class->SUPER::initSearchPath();
+	$class->SUPER::initSearchPath(@_);
 	
 	# TODO: we might want to make this a bit more intelligent
 	# as Perl is not always in that folder (eg. German Windows)
@@ -131,6 +131,8 @@ sub initPrefs {
 	# we now have a binary control panel - don't show the wizard
 	$prefs->{wizardDone} = 1;
 }
+
+sub canDBHighMem { 1 }
 
 sub postInitPrefs {
 	my ($class, $prefs) = @_;
@@ -150,7 +152,7 @@ sub dirsFor {
 	
 	my @dirs = $class->SUPER::dirsFor($dir);
 	
-	if ($dir =~ /^(?:strings|revision|convert|types)$/) {
+	if ($dir =~ /^(?:strings|revision|convert|types|repositories)$/) {
 
 		push @dirs, $Bin;
 
@@ -392,6 +394,17 @@ sub getProxy {
 	}
 
 	return $proxy || $class->SUPER::getProxy();
+}
+
+sub getDefaultGateway {
+	my $route = `route print -4`;
+	while ( $route =~ /^\s*0\.0\.0\.0\s+\d+\.\d+\.\d+\.\d+\s+(\d+\.\d+\.\d+\.\d+)/mg ) {
+		if ( Slim::Utils::Network::ip_is_private($1) ) {
+			return $1;
+		}
+	}
+	
+	return;
 }
 
 sub ignoredItems {
@@ -846,7 +859,7 @@ sub cleanupTempDirs {
 sub getUpdateParams {
 	my ($class, $url) = @_;
 
-	return if main::SLIM_SERVICE || main::SCANNER;
+	return if main::SCANNER;
 	
 	if (!$PerlSvc::VERSION) {
 		Slim::Utils::Log::logger('server.update')->info("Running Logitech Media Server from the source - don't download the update.");

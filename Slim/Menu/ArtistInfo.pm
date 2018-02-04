@@ -269,7 +269,7 @@ sub _findDBCriteria {
 tie my %cachedFeed, 'Tie::Cache::LRU', 2;
 
 sub cliQuery {
-	$log->debug('cliQuery');
+	main::DEBUGLOG && $log->is_debug && $log->debug('cliQuery');
 	my $request = shift;
 	
 	# WebUI or newWindow param from SP side results in no
@@ -295,7 +295,7 @@ sub cliQuery {
 	my $menuMode       = $request->getParam('menu') || 0;
 	my $menuContext    = $request->getParam('context') || 'normal';
 	my $playlist_index = defined( $request->getParam('playlist_index') ) ?  $request->getParam('playlist_index') : undef;
-	my $connectionId   = $request->connectionID;
+	my $connectionId   = $request->connectionID || '';
 
 	my $tags = {
 		menuMode      => $menuMode,

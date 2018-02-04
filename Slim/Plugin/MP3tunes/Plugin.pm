@@ -15,7 +15,7 @@ sub initPlugin {
 	my $class = shift;
 
 	Slim::Player::ProtocolHandlers->registerIconHandler(
-		qr/(?:squeezenetwork\.com.*\/mp3tunes|mp3tunes\.com\/)/,
+		qr/(?:mysqueezebox\.com.*\/mp3tunes|mp3tunes\.com\/)/,
 		sub { return $class->_pluginDataFor('icon'); }
 	);
 
@@ -28,30 +28,9 @@ sub initPlugin {
 	);
 	
 	Slim::Formats::RemoteMetadata->registerProvider(
-		match => qr{mp3tunes\.com|squeezenetwork\.com/mp3tunes},
+		match => qr{mp3tunes\.com|mysqueezebox\.com/mp3tunes},
 		func   => \&metaProvider,
 	);
-	
-	if ( main::SLIM_SERVICE ) {
-		# Also add to MY_MUSIC menu
-		my $menu = {
-			useMode => sub { $class->setMode(@_) },
-			header  => 'PLUGIN_MP3TUNES_MODULE_NAME',
-		};
-		
-		Slim::Buttons::Home::addSubMenu(
-			'MY_MUSIC',
-			'PLUGIN_MP3TUNES_MODULE_NAME',
-			$menu,
-		);
-		
-		# Setup additional CLI methods for this menu
-		$class->initCLI(
-			feed => Slim::Networking::SqueezeNetwork->url('/api/mp3tunes/v1/opml'),
-			tag  => 'mp3tunes_my_music',
-			menu => 'my_music',
-		);
-	}
 }
 
 sub getDisplayName () {

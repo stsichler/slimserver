@@ -369,7 +369,7 @@ sub _cliQuery_done {
 		my $cachetime = defined $feed->{'cachetime'} ? $feed->{'cachetime'} : CACHE_TIME;
 		main::DEBUGLOG && $log->is_debug && $log->debug( "Caching session $sid for $cachetime" );
 		eval { $cache->set( "xmlbrowser_$sid", $feed, $cachetime ) };
-		if ( $@ && $log->is_debug ) {
+		if ( main::DEBUGLOG && $@ && $log->is_debug ) {
 			$log->debug("Session not cached: $@");
 		}
 	}
@@ -811,6 +811,7 @@ sub _cliQuery_done {
 						item        => $item,
 						subFeed     => $subFeed,
 						noFavorites => 1,
+						item_id		=> scalar @crumbIndex ? join('.', @crumbIndex) : undef,
 						subItemId   => $xmlbrowserPlayControl,
 						playalbum   => 1,	# Allways add play-all item
 					})
@@ -1010,8 +1011,8 @@ sub _cliQuery_done {
 					
 					my $id = $baseId . $itemIndex;
 					
-					my $name;
-					if ($name = $item->{name}) {
+					my $name = $item->{name};
+					if (defined $name && $name ne '') {
 						if (defined $item->{'label'}) {
 							$name = $request->string($item->{'label'}) . $request->string('COLON') . ' ' .  $name;
 						} elsif (!$search && ($item->{'hasMetadata'} || '') eq 'track') {
@@ -1028,6 +1029,7 @@ sub _cliQuery_done {
 					# keep track of station icons
 					if ( 
 						$isPlayable 
+						&& $item->{url} && !ref $item->{url}
 						&& $item->{url} =~ /^http/ 
 						&& $item->{url} !~ m|\.com/api/\w+/v1/opml| 
 						&& (my $cover = ($item->{image} || $item->{cover})) 
@@ -1042,7 +1044,7 @@ sub _cliQuery_done {
 						$hash{'type'}   = $item->{'type'}  if defined $item->{'type'};
 										# search|text|textarea|audio|playlist|link|opml|replace|redirect|radio
 										# radio is a radio-button selection item, not an internet-radio station 
-						my $nameOrTitle = $name || $item->{title} || '';
+						my $nameOrTitle = getTitle($name, $item);
 						my $touchToPlay = defined(touchToPlay($item)) + 0;
 						
 						# if showBriefly is 1, send the name as a showBriefly
@@ -1337,7 +1339,7 @@ sub _cliQuery_done {
 						
 						if (exists $hash{'actions'} && scalar keys %{$hash{'actions'}}) {
 							delete $hash{'action'};
-							delete $hash{'style'} if $hash{'style'} eq 'itemNoAction';
+							delete $hash{'style'} if $hash{'style'} && $hash{'style'} eq 'itemNoAction';
 						}
 						
 						$hash{'textkey'} = $item->{textkey} if defined $item->{textkey};
@@ -1717,7 +1719,7 @@ sub hasAudio {
 	elsif ( $item->{'type'} && $item->{'type'} =~ /^(?:audio|playlist)$/ ) {
 		return $item->{'playlist'} || $item->{'url'} || scalar @{ $item->{outline} || [] };
 	}
-	elsif ( $item->{'enclosure'} && ( $item->{'enclosure'}->{'type'} =~ /audio/ ) ) {
+	elsif ( $item->{'enclosure'} && $item->{'enclosure'}->{'type'} && ( $item->{'enclosure'}->{'type'} =~ /audio/ ) ) {
 		return $item->{'enclosure'}->{'url'};
 	}
 	else {
@@ -1789,7 +1791,7 @@ sub _playlistControlContextMenu {
 	
 	# We only add playlist-control items for an item which is playable
 	if (hasAudio($item)) {
-		my $item_id = $request->getParam('item_id') || '';
+		my $item_id = $args->{item_id} || $request->getParam('item_id') || '';
 		my $mode    = $request->getParam('mode');
 		my $sub_id  = $args->{'subItemId'};
 		my $subFeed = $args->{'subFeed'};
@@ -1837,7 +1839,7 @@ sub _playlistControlContextMenu {
 			},
 		}
 		
-		if ($addPlayAll && ($action = _makePlayAction($subFeed, $item, 'playall', 'nowPlaying', $query, $mode, $request->getParam('item_id'), $sub_id))) {
+		if ($addPlayAll && ($action = _makePlayAction($subFeed, $item, 'playall', 'nowPlaying', $query, $mode, $args->{item_id} || $request->getParam('item_id'), $sub_id))) {
 			push @contextMenu, {
 				text => $request->string('JIVE_PLAY_ALL_SONGS'),
 				style => $canIcons ? 'item_playall' : 'itemNoAction',
@@ -1949,6 +1951,18 @@ sub _defeatDestructiveTouchToPlay {
 	
 	return 1;
 }
+
+# a name can be '0' (zero) - don't blank it
+sub getTitle {
+	my ($name, $item) = @_;
+
+	my $nameOrTitle = $name;
+	$nameOrTitle    = $item->{title} if !defined $nameOrTitle || $nameOrTitle eq '';
+	$nameOrTitle    = '' if !defined $nameOrTitle;
+	
+	return $nameOrTitle;
+}
+
 
 1;
 

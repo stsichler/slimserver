@@ -12,7 +12,7 @@ use strict;
 
 use Digest::MD5 qw(md5_hex);
 use HTTP::Date;
-use Network::IPv4Addr ();
+use Net::IPv4Addr ();
 use Socket;
 
 use Slim::Networking::Select;
@@ -76,7 +76,7 @@ sub init {
 				for (my $i = 0; $i < @$addresses; $i++) {
 					if (my ($addr) = $addresses->[$i] =~ /^(\d+\.\d+.\d+.\d+)$/ ){
 						push @addresses, $addr;
-						$CIDR{$addr} = Network::IPv4Addr::ipv4_parse($addr, $subnets->[$i]);
+						$CIDR{$addr} = Net::IPv4Addr::ipv4_parse($addr, $subnets->[$i]);
 					}
 				}
 			} 
@@ -90,7 +90,7 @@ sub init {
 				next unless $if->is_running && $if->is_multicast;
 				my $addr = $if->address || next;
 				push @addresses, $addr;
-				$CIDR{$addr} = Network::IPv4Addr::ipv4_parse($addr, $if->netmask);
+				$CIDR{$addr} = Net::IPv4Addr::ipv4_parse($addr, $if->netmask);
 			}
 		};
 	}
@@ -156,7 +156,7 @@ sub shutdown {
 	}
 	%SOCKS = ();
 	
-	$log->info('UPnP Discovery shutdown');
+	main::INFOLOG && $log->is_info && $log->info('UPnP Discovery shutdown');
 }
 
 sub server { $SERVER }
@@ -167,7 +167,7 @@ sub _read {
 	my $addr = recv $sock, my $ssdp, 1024, 0;
 
 	if ( !defined $addr ) {
-		$log->is_debug && $log->debug("Read search result failed: $!");
+		main::DEBUGLOG && $log->is_debug && $log->debug("Read search result failed: $!");
 		return;
 	}
 	
@@ -479,12 +479,12 @@ sub _advertise {
 			# Determine which of our local addresses is on the same subnet as the destination
 			my $local_addr;
 			for my $a ( keys %SOCKS ) {
-				if ( exists $CIDR{$a} && Network::IPv4Addr::ipv4_in_network($CIDR{$a}, $dest->{addr}) ) {
+				if ( exists $CIDR{$a} && Net::IPv4Addr::ipv4_in_network($CIDR{$a}, $dest->{addr}) ) {
 					$local_addr = $a;
 					last;
 				}
 			}
-			if ( !$local_addr ) {
+			if ( !$local_addr || $local_addr eq '0.0.0.0' ) {
 				$local_addr = Slim::Utils::Network::serverAddr(); # default
 			}
 			

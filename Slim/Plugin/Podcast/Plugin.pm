@@ -16,7 +16,7 @@ use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(string);
 use Slim::Utils::Timers;
 
-use constant PROGRESS_INTERVAL => main::SLIM_SERVICE ? 15 : 5;     # update progress tracker every x seconds
+use constant PROGRESS_INTERVAL => 5;     # update progress tracker every x seconds
 
 my $log = Slim::Utils::Log->addLogCategory({
 	'category'     => 'plugin.podcast',
@@ -34,6 +34,7 @@ $prefs->init({
 
 # migrate old prefs across
 $prefs->migrate(1, sub {
+	require Slim::Utils::Prefs::OldPrefs;
 	my @names  = @{Slim::Utils::Prefs::OldPrefs->get('plugin_podcast_names') || [] };
 	my @values = @{Slim::Utils::Prefs::OldPrefs->get('plugin_podcast_feeds') || [] };
 	my @feeds;
@@ -82,7 +83,6 @@ sub handleFeed {
 
 	my $items = [];
 	
-#	my @feeds = main::SLIM_SERVICE ? feedsForClient($client) : @{$prefs->get('feeds')}; 
 	my @feeds = @{$prefs->get('feeds')}; 
 	
 	foreach ( @feeds ) {
@@ -109,15 +109,13 @@ sub songChangeCallback {
 	}
 
 	my $url = Slim::Player::Playlist::url($client);
-	
-	if ( $url =~ /#slimpodcast/ && $request->isCommand([['playlist'], ['newsong']]) ) {
-		my $key = 'podcast-position-' . $url;
-		if ( my $newPos = $cache->get($key) ) {
-			$cache->remove($key);
+
+	if ( $request->isCommand([['playlist'], ['newsong']]) && !($client->pluginData('goto') && $client->pluginData('goto') eq $url) && Slim::Music::Info::isRemoteURL($url) ) {
+		$client->pluginData( goto => $url );
+
+		if ( my $newPos = $cache->get("podcast-$url") ) {
 			Slim::Player::Source::gototime($client, $newPos);
 		}
-		
-		$url =~ s/#slimpodcast.*//;
 	}
 
 	if ( defined $cache->get('podcast-' . $url) ) {
@@ -148,7 +146,11 @@ sub _trackProgress {
 		# track objects aren't persistent across server restarts - keep our own list of podcast durations in the cache
 		$cache->set("$key-duration", Slim::Player::Source::playingSongDuration($client), '30days') unless $cache->get("$key-duration");
 
-		main::DEBUGLOG && $log->is_debug && $log->debug('Updating podcast progress state for ' . $client->name . ': ' . Slim::Player::Source::songTime($client));
+		main::DEBUGLOG && $log->is_debug && $log->debug('Updating podcast progress state ' . Data::Dump::dump({
+			player => $client->name,
+			url => $url,
+			playtime => Slim::Player::Source::songTime($client),
+		}));
 	
 		Slim::Utils::Timers::setTimer(
 			$client,
@@ -170,8 +172,6 @@ sub trackInfoMenu {
 	
 	my $song = Slim::Player::Source::playingSong($client);
 	return unless $song && $song->canSeek;
-
-	$url =~ s/#slimpodcast.*//;
 
 	if ( $url && defined $cache->get('podcast-' . $url) ) {
 		my $title = $client->string('PLUGIN_PODCAST_SKIP_BACK', $prefs->get('skipSecs'));
@@ -202,43 +202,5 @@ sub trackInfoMenu {
 	
 	return;
 }
-
-
-# SN only
-# XXX - do we still run this plugin on SN?
-=pod
-sub feedsForClient { if (main::SLIM_SERVICE) {
-	my $client = shift;
-	
-	my $userid = $client->playerData->userid->id;
-	
-	my @f = SDI::Service::Model::FavoritePodcast->search(
-		userid => $userid,
-		{ order_by => 'num' }
-	);
-													  
-	my @feeds = map { 
-		{ 
-			name  => $_->title, 
-			value => $_->url,
-		}
-	} @f;
-	
-	# check if the user deleted feeds so we don't load the defaults
-	my $deletedFeeds = preferences('server')->client($client)->get('deleted_podcasts');
-	
-	# Populate with all default feeds
-	if ( !scalar @feeds && !$deletedFeeds ) {
-		@feeds = map { 
-			{ 
-				name  => $_->title, 
-				value => $_->url,
-			}
-		} SDI::Service::Model::FavoritePodcast->addDefaults( $userid );
-	}
-	
-	return @feeds;
-} }
-=cut
 
 1;

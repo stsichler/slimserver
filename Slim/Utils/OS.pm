@@ -31,6 +31,19 @@ sub initDetails {
 	return shift->{osDetails};
 }
 
+sub getMACAddress {
+	my $class = shift;
+	
+	if (!main::SCANNER && !defined $class->{osDetails}->{mac}) {
+		require Slim::Utils::Network;
+		
+		# fall back to empty string to prevent repeated attempts (if needed)
+		$class->{osDetails}->{mac} = Slim::Utils::Network::serverMACAddress() || '';
+	}
+
+	return $class->{osDetails}->{mac};
+}
+
 sub details {
 	return shift->{osDetails};
 }
@@ -60,42 +73,61 @@ sub sqlHelperClass {
 # Skip obsolete plugins, they should be deleted by installers
 sub skipPlugins {return (qw(Picks ShoutcastBrowser Webcasters Health));}
 
-=head2 initSearchPath( )
+=head2 initSearchPath( [$baseDir] )
 
-Initialises the binary seach path used by Slim::Utils::Misc::findbin to OS specific locations
+Initialises the binary seach path used by Slim::Utils::Misc::findbin to OS specific locations.
+Optionally a base directory can be defined, eg. used to add plugin specific folders.
 
 =cut
 
 sub initSearchPath {
 	my $class = shift;
+	my $baseDir = shift || $class->dirsFor('Bin');
 	# Initialise search path for findbin - called later in initialisation than init above
 
 	# Reduce all the x86 architectures down to i386, including x86_64, so we only need one directory per *nix OS. 
 	my $binArch = $class->{osDetails}->{'binArch'} = $Config::Config{'archname'};
 	$class->{osDetails}->{'binArch'} =~ s/^(?:i[3456]86|x86_64)-([^-]+).*/i386-$1/;
 	
-	# Reduce ARM to arm-linux
-	if ( $class->{osDetails}->{'binArch'} =~ /^arm.*linux/ ) {
+	# Reduce ARM to arm(hf)-linux
+	if ( $class->{osDetails}->{'binArch'} =~ /^arm.*linux.*gnueabihf/ ||
+		($class->{osDetails}->{'binArch'} =~ /arm/ && (
+			$Config::Config{'lddlflags'} =~ /\-mfloat\-abi=hard/ ||
+			$Config::Config{'config_args'} =~ /\-mfloat\-abi=hard/
+		))
+	) {
+		$class->{osDetails}->{'binArch'} = 'armhf-linux';
+	}
+	elsif ( $class->{osDetails}->{'binArch'} =~ /^arm.*linux/ ) {
 		$class->{osDetails}->{'binArch'} = 'arm-linux';
 	}
-	
+	elsif ( $class->{osDetails}->{'binArch'} =~ /^aarch64-linux/ ) {
+		$class->{osDetails}->{'binArch'} = 'aarch64-linux';
+	}
+
 	# Reduce PPC to powerpc-linux
-	if ( $class->{osDetails}->{'binArch'} =~ /^(?:ppc|powerpc).*linux/ ) {
+	elsif ( $class->{osDetails}->{'binArch'} =~ /^(?:ppc|powerpc).*linux/ ) {
 		$class->{osDetails}->{'binArch'} = 'powerpc-linux';
 	}
 
-	my @paths = ( catdir($class->dirsFor('Bin'), $class->{osDetails}->{'binArch'}), catdir($class->dirsFor('Bin'), $^O), $class->dirsFor('Bin') );
+	my @paths = ( catdir($baseDir, $class->{osDetails}->{'binArch'}), catdir($baseDir, $^O), $baseDir );
 
 	# Linux x86_64 should check its native folder first
 	if ( $binArch =~ s/^x86_64-([^-]+).*/x86_64-$1/ ) {
-		unshift @paths, catdir($class->dirsFor('Bin'), $binArch);
+		unshift @paths, catdir($baseDir, $binArch);
+	}
+	elsif ( $class->{osDetails}->{'binArch'} eq 'armhf-linux' ) {
+		push @paths, catdir($baseDir, 'arm-linux');
+	}
+	elsif ( $class->{osDetails}->{'binArch'} =~ /darwin/i && $class->{osDetails}->{osArch} =~ /x86_64/ ) {
+		unshift @paths, catdir($baseDir, $class->{osDetails}->{'binArch'} . '-x86_64'), catdir($baseDir, $^O . '-x86_64');
 	}
 	
 	Slim::Utils::Misc::addFindBinPaths(@paths);
 
 	# add path to Extension installer loaded plugins to @INC, NB this can only be done here as it requires Prefs to be loaded
 	# and the cachedir pref to be set before we can do it.  Prefs requires OSDetect so we can't do it at init time of OSDetect.
-	if (!main::SLIM_SERVICE && (my $cache = Slim::Utils::Prefs::preferences('server')->get('cachedir')) ) {
+	if ( my $cache = Slim::Utils::Prefs::preferences('server')->get('cachedir') ) {
 		unshift @INC, catdir($cache, 'InstalledPlugins');
 	}
 }
@@ -263,6 +295,11 @@ sub getProxy {
 	return $proxy;
 }
 
+=head2 getDefaultGateway()
+	Get the network's default gateway address
+=cut
+sub getDefaultGateway { '' }
+
 sub ignoredItems {
 	return (
 		# Items we should ignore on a linux volume
@@ -337,6 +374,8 @@ sub _parseLanguage {
 	$language = uc($language);
 	$language =~ s/\.UTF.*$//;
 	$language =~ s/(?:_|-|\.)\w+$//;
+	
+	return 'EN' if $language && $language eq 'C';
 	
 	return $language || 'EN';
 }
@@ -413,8 +452,20 @@ sub installerExtension { '' };
 sub installerOS { '' };
 
 # XXX - disable AutoRescan for all but SqueezeOS for now
-sub canAutoRescan { 0 };
+sub canAutoRescan { 0 }
 
+# can we use more memory to improve DB performance?
+sub canDBHighMem { 0 }
+
+# some systems support checking ACLs in addition to simpler file tests
+my $filetest;
+sub aclFiletest {
+	my ($class, $cb) = @_;
+	
+	$filetest = $cb if $cb;
+	
+	return $filetest;
+}
 
 =head2 directFirmwareDownload( )
 
@@ -445,5 +496,9 @@ sub restartServer { 0 }
 sub canRestartServer { 0 }
 
 sub progressJSON { }
+
+sub runningFromSource {
+	$::REVISION =~ /^\s*\d+\s*$/ ? 0 : 1;
+}
 
 1;

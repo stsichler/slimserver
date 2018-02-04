@@ -6,7 +6,7 @@ use strict;
 use base qw(Slim::Plugin::OPMLBased);
 
 use Slim::Networking::SimpleAsyncHTTP;
-use Slim::Plugin::RadioTime::Plugin;
+use Slim::Plugin::InternetRadio::TuneIn;
 use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 
@@ -24,11 +24,13 @@ sub initPlugin {
 			\&_initRadio,
 		);
 		
-		# Setup cant_open handler for RadioTime reporting
+		# Setup cant_open handler for TuneIn reporting
 		Slim::Control::Request::subscribe(
 			\&cantOpen,
-			[['playlist'],['cant_open' ]],
+			[['playlist'],['cant_open']],
 		);
+		
+		Slim::Plugin::InternetRadio::TuneIn->init();
 	}
 
 	if ( $class ne __PACKAGE__ ) {
@@ -40,24 +42,11 @@ sub initPlugin {
 }
 
 sub _initRadio {
-	if ( main::SLIM_SERVICE ) {
-		# On SN, fetch the list of radio menu items directly
-		require SDI::Util::RadioMenus;
-		
-		my $menus = SDI::Util::RadioMenus->menus(
-			uri_prefix => 'http://' . Slim::Networking::SqueezeNetwork->get_server('sn'),
-		);
-		
-		__PACKAGE__->buildMenus( $menus );
-		
-		return;
-	}
-	
 	Slim::Formats::XML->getFeedAsync(
 		\&_gotRadio,
 		\&_gotRadioError,
 		{
-			url     => Slim::Plugin::RadioTime::Plugin->mainUrl,
+			url     => Slim::Plugin::InternetRadio::TuneIn->mainUrl,
 			Timeout => 30,
 		},
 	);
@@ -66,7 +55,7 @@ sub _initRadio {
 sub _gotRadio {
 	my $opml = shift;
 
-	my $menu = Slim::Plugin::RadioTime::Plugin->parseMenu($opml);
+	my $menu = Slim::Plugin::InternetRadio::TuneIn->parseMenu($opml);
 	
 	__PACKAGE__->buildMenus( $menu );
 }
@@ -116,16 +105,9 @@ sub generate {
 	my $type    = $item->{type};
 	my $icon    = $item->{icon};
 	my $iconRE  = $item->{iconre} || 0;
-	
-	# SN needs to dynamically filter radio plugins per-user and append values such as RT username
-	my $filter;
-	my $append;
-	if ( main::SLIM_SERVICE ) {
-		$filter = $item->{filter}; # XXX needed?
-		$append = $item->{append};
-	}
-	elsif ( $feed =~ /username=([^&]+)/ ) {
-		Slim::Plugin::RadioTime::Plugin->setUsername($1);
+
+	if ( $feed =~ /username=([^&]+)/ ) {
+		Slim::Plugin::InternetRadio::TuneIn->setUsername($1);
 	}
 
 	# Bug 14245, this class may already exist if it was created on startup with no SN account,
@@ -154,17 +136,6 @@ package ${package}::${subclass};
 use strict;
 use base qw($package);
 
-};
-
-	if ( main::SLIM_SERVICE ) {
-		$code .= qq{
-use Slim::Utils::Prefs;
-
-my \$prefs = preferences('server');
-};
-	}
-	
-	$code .= qq{
 sub initPlugin {
 	my \$class = shift;
 	
@@ -193,27 +164,9 @@ sub playerMenu { 'RADIO' }
 
 };
 
-	if ( main::SLIM_SERVICE && $append ) {
-		# Feed method must append a pref to the URL
+	# TuneIn URLs require special handling
+	if ( $feed =~ /(?:radiotime|tunein)\.com/ ) {
 		$code .= qq{
-sub feed {
-	my ( \$class, \$client ) = \@_;
-	
-	my \$val = \$prefs->client(\$client)->get('$append');
-	
-	my \$feed = '$feed';
-	
-	\$feed .= ( \$feed =~ /\\\?/ ) ? '&' : '?';
-	\$feed .= \$val;
-	
-	return \$class->radiotimeFeed( \$feed, \$client );
-}
-};
-	}
-	else {
-		# RadioTime URLs require special handling
-		if ( $feed =~ /(?:radiotime|tunein)\.com/ ) {
-			$code .= qq{
 sub feed {
 	my \$class = shift;
 	
@@ -222,12 +175,11 @@ sub feed {
 	return \$class->radiotimeFeed( \$feed, \@_ );
 }
 };
-		}
-		else {
-			$code .= qq{
+	}
+	else {
+		$code .= qq{
 sub feed { getFeed() }
 };
-		}
 	}
 
 	$code .= qq{
@@ -257,11 +209,11 @@ sub setFeed { \$localFeed = \$_[1] }
 	$subclass->initPlugin();
 }
 
-# Some RadioTime-specific code to add formats param if Alien is installed
+# Some TuneIn-specific code to add formats param if Alien is installed
 sub radiotimeFeed {
 	my ( $class, $feed, $client ) = @_;
 
-	return Slim::Plugin::RadioTime::Plugin->fixUrl($feed, $client);
+	return Slim::Plugin::InternetRadio::TuneIn->fixUrl($feed, $client);
 }
 
 sub _pluginDataFor {
@@ -278,14 +230,11 @@ sub cantOpen {
 	my $url   = $request->getParam('_url');
 	my $error = $request->getParam('_error');
 	
-	if ( !main::SLIM_SERVICE ) {
-		# Do not report if the user has turned off stats reporting
-		# Reporting is always enabled on SN
-		return if $prefs->get('sn_disable_stats');
-	}
+	# Do not report if the user has turned off stats reporting
+	return if $prefs->get('sn_disable_stats');
 	
 	if ( $error && $url =~ /(?:radiotime|tunein)\.com/ ) {
-		Slim::Plugin::RadioTime::Plugin->reportError($url, $error);
+		Slim::Plugin::InternetRadio::TuneIn->reportError($url, $error);
 	}
 }
 

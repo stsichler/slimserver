@@ -214,7 +214,7 @@ sub _downloadError {
 
 	$downloading--;
 
-	$log->warn("unable to download $name from $url - $error");
+	$log->error("unable to download $name from $url - $error");
 }
 
 sub downloading {
@@ -244,10 +244,7 @@ sub checkForUpdates {
 
 	$request->addParam(args => {
 		type => 'plugin',
-		targetPlat => Slim::Utils::OSDetect::OS(),
-		targetVers => $::VERSION,
-		current    => $current,
-		lang       => $Slim::Utils::Strings::currentLang,
+		current => $current,
 	});
 
 	for my $plugin (keys %$plugins) {
@@ -272,6 +269,15 @@ sub _handleResponse {
 	my $actions = $request->getResult('actions');
 
 	if ( $updates ) {
+		my $plugins = Slim::Utils::PluginManager->allPlugins;
+
+		# localize plugin names
+		$updates = join(', ',
+			map {
+				Slim::Utils::Strings::string($plugins->{$_}->{name});
+			} split(/,/, $updates)
+		);
+
 		Slim::Utils::PluginManager->message(
 			sprintf( "%s (%s)", Slim::Utils::Strings::string('PLUGINS_UPDATES_AVAILABLE'), $updates )
 		);

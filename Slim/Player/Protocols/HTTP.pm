@@ -141,7 +141,7 @@ sub parseMetadata {
 		
 		my $handled = eval { $parser->( $client, $url, $metadata ) };
 		if ( $@ ) {
-			my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($parser);
+			my $name = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($parser) : 'unk';
 			logger('formats.metadata')->error( "Metadata parser $name failed: $@" );
 		}
 		return if $handled;
@@ -260,26 +260,24 @@ sub parseMetadata {
 sub canDirectStream {
 	my ($classOrSelf, $client, $url, $inType) = @_;
 	
-	if ( !main::SLIM_SERVICE ) {
-		# When synced, we don't direct stream so that the server can proxy a single
-		# stream for all players
-		if ( $client->isSynced(1) ) {
+	# When synced, we don't direct stream so that the server can proxy a single
+	# stream for all players
+	if ( $client->isSynced(1) ) {
 
-			if ( main::INFOLOG && $directlog->is_info ) {
-				$directlog->info(sprintf(
-					"[%s] Not direct streaming because player is synced", $client->id
-				));
-			}
-
-			return 0;
+		if ( main::INFOLOG && $directlog->is_info ) {
+			$directlog->info(sprintf(
+				"[%s] Not direct streaming because player is synced", $client->id
+			));
 		}
 
-		# Allow user pref to select the method for streaming
-		if ( my $method = $prefs->client($client)->get('mp3StreamingMethod') ) {
-			if ( $method == 1 ) {
-				main::DEBUGLOG && $directlog->debug("Not direct streaming because of mp3StreamingMethod pref");
-				return 0;
-			}
+		return 0;
+	}
+
+	# Allow user pref to select the method for streaming
+	if ( my $method = $prefs->client($client)->get('mp3StreamingMethod') ) {
+		if ( $method == 1 ) {
+			main::DEBUGLOG && $directlog->debug("Not direct streaming because of mp3StreamingMethod pref");
+			return 0;
 		}
 	}
 	
@@ -367,7 +365,7 @@ sub parseDirectHeaders {
 			$redir = $1;
 		}
 		
-		elsif ($header =~ /^Content-Type:\s*(.*)/i) {
+		elsif ($header =~ /^Content-Type:\s*([^;\n]*)/i) {
 			$contentType = $1;
 		}
 		
@@ -516,7 +514,7 @@ sub parseHeaders {
 	}
 	else {
 	
-		if ( $bitrate > 0 && defined $self->contentLength && $self->contentLength > 0 ) {
+		if ( $bitrate && $bitrate > 0 && defined $self->contentLength && $self->contentLength > 0 ) {
 			# if we know the bitrate and length of a stream, display a progress bar
 			if ( $bitrate < 1000 ) {
 				${*$self}{'bitrate'} *= 1000;
@@ -552,15 +550,7 @@ sub requestString {
 	my ($server, $port, $path, $user, $password) = Slim::Utils::Misc::crackURL($url);
  
 	# Use full path for proxy servers
-	my $proxy;
-	
-	if ( main::SLIM_SERVICE ) {
-		# Let user specify their own proxy to use
-		$proxy = $prefs->client($client)->get('webproxy');
-	}
-	else {
-		$proxy = $prefs->get('webproxy');
-	}
+	my $proxy = $prefs->get('webproxy');
 	
 	if ( $proxy && $server !~ /(?:localhost|127.0.0.1)/ ) {
 		$path = "http://$server:$port$path";
@@ -600,7 +590,7 @@ sub requestString {
 
 	# If seeking, add Range header
 	if ($client && $seekdata) {
-		$request .= $CRLF . 'Range: bytes=' . int( $seekdata->{sourceStreamOffset} +  $seekdata->{restartOffset}) . '-';
+		$request .= $CRLF . 'Range: bytes=' . int( ($seekdata->{sourceStreamOffset} || 0) + ($seekdata->{restartOffset} || 0) ) . '-';
 		
 		if (defined $seekdata->{timeOffset}) {
 			# Fix progress bar
@@ -623,23 +613,21 @@ sub requestString {
 	}
 	
 	# Bug 5858, add cookies to the request
-	if ( !main::SLIM_SERVICE ) {
-		my $request_object = HTTP::Request->parse($request);
-		$request_object->uri($url);
-		Slim::Networking::Async::HTTP::cookie_jar->add_cookie_header( $request_object );
-		$request_object->uri($path);
-			
-		# Bug 9709, strip long cookies from the request
-		$request_object->headers->scan( sub {
-			if ( $_[0] eq 'Cookie' ) {
-				if ( length($_[1]) > 512 ) {
-					$request_object->headers->remove_header('Cookie');
-				}
-			}
-		} );
+	my $request_object = HTTP::Request->parse($request);
+	$request_object->uri($url);
+	Slim::Networking::Async::HTTP::cookie_jar->add_cookie_header( $request_object );
+	$request_object->uri($path);
 		
-		$request = $request_object->as_string( $CRLF );				
-	}
+	# Bug 9709, strip long cookies from the request
+	$request_object->headers->scan( sub {
+		if ( $_[0] eq 'Cookie' ) {
+			if ( length($_[1]) > 512 ) {
+				$request_object->headers->remove_header('Cookie');
+			}
+		}
+	} );
+	
+	$request = $request_object->as_string( $CRLF );				
 
 	return $request;
 }
@@ -671,7 +659,7 @@ sub getMetadataFor {
 	if ( $provider ) {
 		my $metadata = eval { $provider->( $client, $url ) };
 		if ( $@ ) {
-			my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($provider);
+			my $name = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($provider) : 'unk';
 			$log->error( "Metadata provider $name failed: $@" );
 		}
 		elsif ( scalar keys %{$metadata} ) {
@@ -721,22 +709,7 @@ sub getMetadataFor {
 	
 	# Check for radio URLs with cached covers
 	my $cache = Slim::Utils::Cache->new();
-	my $cover;
-	
-	if ( main::SLIM_SERVICE ) {
-		# Only try to fetch from cache once to avoid spamming memcached
-		# This makes sense for SBS too but I'm not sure if it will
-		# break something, i.e. delayed metadata after the first call
-		if ( my $song = $client->playingSong() ) {
-			$cover = $song->pluginData('httpCover');
-			if ( !defined $cover ) {
-				$cover = $song->pluginData( httpCover => $cache->get( "remote_image_$url" ) || '' );
-			}
-		}
-	}
-	else {		
-		$cover = $cache->get( "remote_image_$url" );
-	}
+	my $cover = $cache->get( "remote_image_$url" );
 	
 	# Item may be a playlist, so get the real URL playing
 	if ( Slim::Music::Info::isPlaylist($url) ) {
@@ -760,7 +733,7 @@ sub getMetadataFor {
 	
 	$artist ||= $track->artistName;
 	
-	if ( $url =~ /archive\.org/ || $url =~ m|squeezenetwork\.com.+/lma/| ) {
+	if ( $url =~ /archive\.org/ || $url =~ m|mysqueezebox\.com.+/lma/| ) {
 		if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::LMA::Plugin') ) {
 			my $icon = Slim::Plugin::LMA::Plugin->_pluginDataFor('icon');
 			return {
@@ -773,13 +746,13 @@ sub getMetadataFor {
 	}
 	else {	
 
-		if ( (my $handler = Slim::Player::ProtocolHandlers->handlerForURL($url)) !~ /^(?:$class|Slim::Player::Protocols::MMS)$/ )  {
+		if ( (my $handler = Slim::Player::ProtocolHandlers->handlerForURL($url)) !~ /^(?:$class|Slim::Player::Protocols::MMS|Slim::Player::Protocols::HTTPS?)$/ )  {
 			if ( $handler && $handler->can('getMetadataFor') ) {
 				return $handler->getMetadataFor( $client, $url );
 			}
 		}	
 
-		my $type = uc( $track->content_type ) . ' ' . Slim::Utils::Strings::cstring($client, 'RADIO');
+		my $type = uc( $track->content_type || '' ) . ' ' . Slim::Utils::Strings::cstring($client, 'RADIO');
 		
 		my $icon = $class->getIcon($url, 'no fallback artwork') || $class->getIcon($playlistURL);
 		
@@ -804,10 +777,6 @@ sub getIcon {
 
 	if ( ($handler = Slim::Player::ProtocolHandlers->iconHandlerForURL($url)) && ref $handler eq 'CODE' ) {
 		return &{$handler};
-	}
-	
-	if ( main::SLIM_SERVICE && !$noFallback ) {
-		return Slim::Networking::SqueezeNetwork->url('/static/images/icons/radio.png', 'external');
 	}
 
 	return $noFallback ? '' : 'html/images/radio.png';
@@ -875,26 +844,6 @@ sub getSeekDataByPosition {
 	my $seekdata = $song->seekdata() || {};
 	
 	return {%$seekdata, restartOffset => $bytesReceived};
-}
-
-# reinit is used on SN to maintain seamless playback when bumped to another instance
-sub reinit {
-	if ( main::SLIM_SERVICE ) {
-		my ( $class, $client, $song ) = @_;
-		
-		main::DEBUGLOG && $log->debug("Re-init HTTP");
-		
-		# Back to Now Playing
-		Slim::Buttons::Common::pushMode( $client, 'playlist' );
-		
-		# Trigger event logging timer for this stream
-		Slim::Control::Request::notifyFromArray(
-			$client,
-			[ 'playlist', 'newsong', Slim::Music::Info::standardTitle( $client, $song->streamUrl() ), 0 ]
-		);
-		
-		return 1;
-	}
 }
 
 1;

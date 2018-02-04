@@ -443,17 +443,6 @@ sub findNextTime {
 	if (defined $self->{_days}) {
 		# Convert base time into a weekday number and time
 		my ($sec, $min, $hour, $mday, $mon, $year, $wday)  = localtime($baseTime);
-		
-		if ( main::SLIM_SERVICE ) {
-			# Adjust for the user's timezone
-			my $dt = $client->datetime;
-			
-			$wday = $dt->day_of_week % 7;
-			$min  = $dt->min;
-			$hour = $dt->hour;
-			
-			main::DEBUGLOG && $isDebug && $log->debug( "SN time adjusted to wday $wday $hour:$min:$sec" );
-		}
 
 		# Find the first enabled alarm starting at baseTime's day num 
 		my $day = $wday;
@@ -565,35 +554,16 @@ sub sound {
 		# don't sound the alarm via the code below
 		$soundAlarm = 0;
 	}
-	
-	if ( main::SLIM_SERVICE ) {
-		# Some players on SN have alarms that simply execute a playlist play command, they don't
-		# need the alarm screensaver, fallback alarm, etc.
-		if ( $client->hasSpecialAlarm ) {
-			# Log it
-			$client->logStreamEvent( 'Alarm: ' . $self->title );
-			
-			# Run it
-			if ( $soundAlarm ) {
-				main::DEBUGLOG && $isDebug && $log->debug( 'Playing special alarm ' . $self->title . ' (' . $self->playlist . ')' );
-				
-				$client->execute( [ 'playlist', 'play', $self->playlist, $self->title ] );
-			
-				# Make sure this alarm is not scheduled again right away
-				$client->alarmData->{lastAlarmTime} = $self->{_nextDue};
-			
-				# don't sound the alarm via the code below
-				$soundAlarm = 0;
-			}
-		}
-	}
 
 	if ($soundAlarm) {
 		# Sound an Alarm (HWV 63)
 		main::DEBUGLOG && $isDebug && $log->debug('Sounding alarm');
 
 		# we need to disable randomplay or we can't change shuffle mode
-		$client->execute(['randomplay', 'disable']);
+		if (defined $self->{_playlist})
+		{
+			$client->execute(['randomplay', 'disable']);
+		}
 
 		# Stop any other current alarm
 		if ($client->alarmData->{currentAlarm}) {
@@ -1172,23 +1142,18 @@ sub _playFallback {
 	my $client = $self->client;
 	
 	my $url;
+
+	my $server = Slim::Utils::Network::serverAddr();
+	my $port   = $prefs->get('httpport');
 	
-	if ( main::SLIM_SERVICE ) {
-		$url = "loop://www.squeezenetwork.com/static/sounds/alarm/slim-backup-alarm.mp3";
+	my $auth = '';
+	if ( $prefs->get('authorize') ) {
+		my $password = Slim::Player::Squeezebox::generate_random_string(10);
+		$client->password($password);
+		$auth = "squeezeboxXXX:${password}@";
 	}
-	else {	
-		my $server = Slim::Utils::Network::serverAddr();
-		my $port   = $prefs->get('httpport');
-		
-		my $auth = '';
-		if ( $prefs->get('authorize') ) {
-			my $password = Slim::Player::Squeezebox::generate_random_string(10);
-			$client->password($password);
-			$auth = "squeezeboxXXX:${password}@";
-		}
-	
-		$url = "loop://${auth}${server}:${port}/html/slim-backup-alarm.mp3";
-	}
+
+	$url = "loop://${auth}${server}:${port}/html/slim-backup-alarm.mp3";
 
 	main::DEBUGLOG && $log->is_debug && $log->debug("Starting fallback alarm: $url");
 
@@ -1380,13 +1345,6 @@ sub loadAlarms {
 	my $prefAlarms = $prefs->client($client)->alarms || {};
 
 	$client->alarmData->{alarms} = {};
-
-	if ( main::SLIM_SERVICE ) {
-		# Ignore alarms on disabled players
-		if ( $client->playerData->disabled ) {
-			$prefAlarms = {};
-		}
-	}
 
 	foreach my $prefAlarm (keys %$prefAlarms) {
 		$prefAlarm = $prefAlarms->{$prefAlarm};
@@ -1781,24 +1739,22 @@ sub getPlaylists {
 			};
 	}
 
-	if (!main::SLIM_SERVICE) {
-		# Add the current saved playlists
-		# XXX: This code would ideally also be elsewhere
-		my @saved = Slim::Schema->rs('Playlist')->getPlaylists;
-		my @savedArray;
-		foreach my $playlist (@saved) {
-			push @savedArray, {
-					title => $playlist->title,
-					url => $playlist->url
-				};
-		}
-
-		@savedArray = sort { $a->{title} cmp $b->{title} } @savedArray; 
-		push @playlists, {
-			type => 'PLAYLISTS',
-			items => \@savedArray,
-		};
+	# Add the current saved playlists
+	# XXX: This code would ideally also be elsewhere
+	my @saved = Slim::Schema->rs('Playlist')->getPlaylists;
+	my @savedArray;
+	foreach my $playlist (@saved) {
+		push @savedArray, {
+				title => $playlist->title,
+				url => $playlist->url
+			};
 	}
+
+	@savedArray = sort { $a->{title} cmp $b->{title} } @savedArray; 
+	push @playlists, {
+		type => 'PLAYLISTS',
+		items => \@savedArray,
+	};
 
 	# Add natural sounds
 	if ( Slim::Utils::PluginManager->isEnabled('Slim::Plugin::Sounds::Plugin') ) {
@@ -1926,8 +1882,6 @@ sub popAlarmScreensaver {
 # to $alarmsScheduled.
 sub _startStopTimeCheck {
 	my $class = shift;
-
-	return if main::SLIM_SERVICE; # SN does things differently
 	
 	my $isDebug = main::DEBUGLOG && $log->is_debug;
 

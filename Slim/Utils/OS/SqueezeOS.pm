@@ -48,6 +48,9 @@ sub initDetails {
 	return $class->{osDetails};
 }
 
+# don't bother - we don't support WOL for Touch etc. anyway
+sub getMACAddress {}
+
 sub ignoredItems {
 	my $class = shift;
 	
@@ -71,8 +74,11 @@ sub initPrefs {
 	$defaults->{libraryname} = "Squeezebox Touch";
 	$defaults->{autorescan} = 1;
 	$defaults->{disabledextensionsvideo}  = 'VIDEO';		# don't scan videos on SqueezeOS
-	$defaults->{disabledextensionsimages} = 'bmp, gif, png' # scaling down non-jpg might use too much memory
+	$defaults->{disabledextensionsimages} = 'bmp, gif, png';# scaling down non-jpg might use too much memory
+	$defaults->{dontTriggerScanOnPrefChange} = 0;
 }
+
+sub canDBHighMem { 0 }
 
 my %prefSyncHandlers = (
 	SQUEEZEPLAY_PREFS . 'SetupLanguage.lua' => sub {
@@ -239,7 +245,7 @@ sub dirsFor {
 		push @dirs, $class->SUPER::dirsFor($dir);
 		push @dirs, "/usr/squeezecenter/Slim/Plugin", "/usr/share/squeezecenter/Plugins";
 		
-	} elsif ($dir =~ /^(?:strings|revision)$/) {
+	} elsif ($dir =~ /^(?:strings|revision|repositories)$/) {
 
 		push @dirs, "/usr/squeezecenter";
 
@@ -312,6 +318,9 @@ sub skipPlugins {
 			iTunes MusicMagic PreventStandby Rescan TT xPL
 			
 			UPnP ImageBrowser
+			
+			ACLFiletest 
+			DnDPlay ExtendedBrowseModes FullTextSearch LibraryDemo
 		),
 		$class->SUPER::skipPlugins(),
 	);
@@ -463,5 +472,8 @@ sub settimeofday {
 }
 
 sub canAutoRescan { 1 };
+
+# SqueezeOS doesn't have a web UI - and we don't want to shell out to get the gateway
+sub getDefaultGateway { '' }
 
 1;

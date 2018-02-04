@@ -1,3 +1,156 @@
+<h2><a name="v7.9.1" id="v7.9.1"></a>Version 7.9.1</h2>
+<ul>
+	<li><a href="#v7.7.6">Upstream fixes from Logitech Media Server 7.7.6</a></li>
+	<br />
+	
+	<li>New Features:</li>
+	<ul>
+		<li>Allow plugins to add JavaScript to the main web UI.</li>
+		<li>Allow plugins to support seek within a transcoded stream.</li>
+		<li>Allow genres or artists to be excluded from last.fm scrobbling.</li>
+	</ul>
+	<br />
+	
+	<li>Bug Fixes:</li>
+	<ul>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=9741">#9741</a> - Allow genres or artists to be excluded from last.fm scrobbling.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=16319">#16319</a> - faad: some files won't play -- depends on name of file.</li>
+		<li>MS Edge 15 would not let us click links in the Default web UI.</li>
+		<li>Fix localization of strings if Controller is requesting another language than the server's.</li>
+	</ul>
+	<br />
+	
+	<li>Platform Support:</li>
+	<ul>
+		<li>Perl 5.26 modules for Linux on x86_64 systems have been added - thanks fsbruva for the build script update!</li>
+		<li>Perl 5.24 modules for Linux on ARM and i386 systems have been added.</li>
+		<li>Support AARCH64 has been added.</li>
+		<li>Re-enable server restart on Debian based systems to allow for automated updates.</li>
+	</ul>
+	<br />
+
+	<li>Other:</li>
+	<ul>
+		<li>Make Playlists menu available to the SB Classic/Boom/Transporter's Home menu</li>
+		<li>Updated faad2 to latest code. Includes patches to increase maximum path length and fix some transcoding issues on Windows. Thanks <a href="https://github.com/ralph-irving/faad2">ralphy</a> and utgg.</li>
+		<li>Limit growth of the write-ahead log files for caches.</li>
+	</ul>
+	<br />
+</ul>
+
+
+<h2><a name="v7.9.0" id="v7.9.0"></a>Version 7.9.0 - 2017-03-07</h2>
+<ul>
+	<li>New Features:</li>
+	<ul>
+		<li>Library Browsing improvements:
+			<ul>
+				<li>Add option to use two browse modes for Album Artists and All Artists instead of one single, configurable list.</li>
+				<li>Add "Random Album" browse mode, to give access to a random selection of albums.</li>
+				<li>Add a "Browse Filesystem" mode to access files outside the music folder, without storing them in the database.</li>
+				<li>Add possibility to browse music managed by an other Logitech Media Server instance and play music from it without the need to switch server.</li>
+				<li>Browse favorite Artists/Genres/Albums instead of just playing them when selected.</li>
+				<li>Add Extended Browse Modes plugin to further configure the library browsing experience.</li>
+				<li>Add support for "Virtual Libraries" or custom library views, to limit the browsing to a sub-set of your overall music collection.</li>
+				<li>Restore ability to play playlists from Browse Music Folder</li>
+				<li>Improved Browse Music Folder performance.</li>
+			</ul>
+		</li>
+		
+		<li>UI improvements:
+			<ul>
+				<li>Add new, fast live search to the web UI.</li>
+				<li>Add Fulltext Search: when searching music the results are no longer limited to a simple title or name search. Fulltext search
+				    includes a lot more data like artist names, lyrics (if available), file type etc. in the evaluation of the search term.</li>
+				<li>Improve "Advanced Search": allow searching for ratings, ranges of years, save results, use results as virtual library etc.</li>
+				<li>Give (limited) control over other players connected to your server from the web UI: power them on/off or start/pause 
+				    playback without the need to switch the currently controlled player</li> 
+				<li>Add Drag'n'Drop support to the web UI: drag and drop audio files from your desktop's file manager (Finder, Explorer etc.) to the 
+				    Logitech Media Server web interface to play them back.</li>
+				<li>Allow the web UI's right hand side panel with player control and current playlist to be hidden.</li>
+				<li>Allow the web UI to be opened with a given navigation for the left hand navigation panel (eg. start with Album Artists).</li>
+				<li>Speed up library browsing in the web UI by caching rendered pages</li>
+			</ul>
+		</li>
+		
+		<li>Scanner behaviour improvements:
+			<ul>
+				<li>Allow browsing your music folder while the scanner is running.</li> 
+				<li>Don't stop the music when running a full wipe &amp; rescan.</li>
+				<li>Add an option to disable automatic rescans on certain preference changes.</li>
+				<li>Increased scanning performance.</li>
+			</ul>
+		</li>
+			
+		<li>Add "Don't Stop The Music" plugin, allowing you to automatically continue the music listening when your playlist comes to an end.</li>
+		<li>Add support for DSD/DSF files on some platforms.</li>
+		<li>Add new way to read player specific transcoding settings from helper files (eg. for room correction). Thanks LMS0815!</li>
+		<li>Add update auto-download and/or notification for Linux distributions</li>
+		<li>Allow streaming of https sources by proxying them through LMS (if possible - requires IO::Socket::SSL to be installed on platforms other than Windows)</li>
+	</ul>
+	<br />
+
+	<li>Bug Fixes:</li>
+	<ul>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=596">#596</a> - Display total duration of a playlist in the web UI.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=709">#709</a> - Add support for "Browse Composers".</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=2333">#2333</a> - Play music outside the music folder without storing it in the database.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=4105">#4105</a> - Don't clear the current playlist when a scan is triggered.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=5108">#5108</a> - Track artist roles become artist roles when COMPILATION=0.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=5507">#5507</a> - Need ability to rescan music library from SqueezePlay based user interfaces.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=5715">#5715</a> - Advanced search doesn't limit results, can freeze the server.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=7491">#7491</a> - Startup parameters are missing when server is run as a Windows service</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=8113">#8113</a> - UPnP servers do not appear on controller.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=9671">#9671</a> - Enable browsing from favorites.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=9687">#9687</a> - Add option to opt out of automatically triggered library scans.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=11556">#11556</a> - Resizing of left/right pane doesn't work in IE8.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=12158">#12158</a> - Allow Inclusion of Tracks from other servers in current playlist.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=15604">#15604</a> - Provide a Browse Compilations browse mode.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=16506">#16506</a> - Honor read access given by ACLs (thanks htgoebel!).</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17081">#17081</a> - "Various Artists" setting should not be blank, but show the default value.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17454">#17454</a> - Unable to delete playlists with playlist rescan.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17474">#17474</a> - Can't browse music folder during scan.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17404">#17404</a> - Cue-sheet problems when navigated to via Music Folder.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17526">#17526</a> - Push any firmware found in cache/updates to players, even if "Check for Updates" is disabled.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17770">#17770</a> - DISC and DISCC TAGS in cue sheets are not recognized (thanks mrthreeplates!).</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17795">#17795</a> - Missing cover blocks real artwork from being found.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17863">#17863</a> - No display of "Comment" Tag when special characters are used.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17953">#17953</a> - Wrong transcoding settings to MP3 in default install.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18107">#18107</a> - Various Artists not include among Album Artists when separate Album Artists and Artists lists are enabled.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18112">#18112</a> - Tracks with double DATE tags get the wrong year assigned by the scanner.</li>
+		<li>Fix support for multi-disc sets in cue files - thanks msrthreeplates!</li>
+		<li>Fix the band "The The". Don't strip articles from search terms.</li>
+		<li>Improve parsing of Atom podcast feeds</li>
+	</ul>
+	<br />
+
+	<li>Other:</li>
+	<ul>
+		<li>Restore the ability to run a single folder scan even if the external scanner needs to run</li>
+		<li>Use VACUUM to reorganize library files when appropriate. This should help performance with larger collections and 
+		    libraries which have been updated a lot. Cache files use auto_vacuum, as they change a lot more often.</li>
+		<li>On Windows and x86 CPU based systems we're going to use more memory for buffers etc. to improve performance.</li>
+		<li>Tweak the web UI to use less graphics and simpler HTML structure. Please note that MSIE users will require version 9
+		    or later, or one of the alternative browsers.</li>
+		<li>Remove SlimService specific code. 7.9 will never be run on mysqueezebox.com.</li>
+		<li>Re-factor preference migration code. Only load migration handlers if needed.</li>
+		<li>Complete re-write of the CUE sheet parsing. Thanks marcoc1712!</li>
+		<li>Add ALBUMARTIST tag support for Cue files (thanks mrthreeplates!).</li>
+		<li>Disable cross-fading between tracks with different sample rates (thanks hickinbottoms!)</li>
+		<li>Enhance string substitution to improve 3rd party transcoding support (thanks LMS0815!)</li>
+		<li>The "mediafolder" query for music files optionally returns coverid (if available). Use the new 'c' tag.</li>
+		<li>Updated player icons in settings pages, now gracefully falling back to generic squeezeplay symbol if unknown
+		    player is connected. Thanks LMS0815!</li>
+		<li>Add helper application binaries for i86pc-solaris (thanks chincheta0815!) and ARM hard float systems</li>
+		<li>Add --nomysqueezebox startup parameter to disable all interaction with mysqueezebox.com</li>
+		<li>Move UPnP client code to Remote Library plugin. Remove now unnecessary --noupnp startup parameter.</li>
+		<li>Try to automatically recover from database corruption</li>
+		<li>Updated translations: Dutch (thanks pinkdot!), French (thanks minscof!), Norwegian (thanks Moffedille!), Polish (thanks matka &amp; Maciej (mh_)!)</li>
+	</ul>
+	<br />
+</ul>
+
+
 <h2><a name="v7.8.1" id="v7.8.1"></a>Version 7.8.1</h2>
 <ul>
 	<li>New Features:</li>
@@ -86,26 +239,34 @@
 <ul>
 	<li>Server Changes:</li>
 	<ul>
+		<li>Block access to settings pages from outside the local network.</li>
 		<li>Migrate our WiMP implementation to the TIDAL branding and service.</li>
 		<li>Change Napster implementation to use AAC instead of MP3.</li>
 		<li>Improve compatibility with latest iTunes 12 updates.</li>
 		<li>Limit the number of items to be added in RandomPlay. Large numbers would cause database errors.</li>
-		<li>Remove defunct Last.fm, SiriusXM and RadioIO plugins.</li>
+		<li>Remove defunct Spotify, Last.fm, SiriusXM and RadioIO plugins.</li>
 		<li>Rename Rhapsody to Napster.</li>
+		<li>Improve support for SSL protected communication. Use https to connect to mysqueezebox.com if possible.</li>
+		<li>Allow streaming of https sources by proxying them through LMS (if possible - requires IO::Socket::SSL to be installed on platforms other than Windows)</li>
 	</ul>
 	<br />
 	
 	<li>Platform Support:</li>
 	<ul>
-		<li>Improve support for latest Mac OSX 10.11 El Capitan and Windows 10.</li>
+		<li>Improve support for Mac OSX 10.11 and later, and Windows 10.</li>
 	</ul>
 	<br />
 	
 	<li>Bug Fixes:</li>
 	<ul>
+		<li>Fix synced playback with Spotify (SB Radio and Touch only)</li> 
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17068">#17068</a> - Lost Artwork playing radio stations</li>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17727">#17727</a> - Playback stops with mp3 + cue sheets combination</li>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=17901">#17901</a> - "Some settings were changed. Do you want to save them?" doesn't honor button clicked.</li>
 		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18078">#18078</a> - All files seen as changed after Daylight Saving time change (Windows only)</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18151">#18151</a> - some server don't accept port definition in header when it's a default port.</li>
+		<li><a href="http://bugs.slimdevices.com/show_bug.cgi?id=18152">#18152</a>, <a href="https://github.com/Logitech/slimserver/issues/143">#143</a> - HTTPS download fails: Connect times out lack of certain headers.</li>
+		<li>Fix several XSS vulnerabilities in the web UI.</li>
 	</ul>
 	<br />
 </ul>
@@ -161,6 +322,7 @@
 		<li>Folders can't be played in Browse Music Folder mode if there are sub-folders and the Classic skin is being used</li>
 		<li>Players without digital out (Boom, Radio) could have ended up with the volume fixed to 100% and no way to change it.</li>
 		<li>Title format "CT" is now "CONTENT_TYPE". Create an alias to make "CT" available again.</li>
+		<li>Don't crash SQL queries if we lack a valid locale.</li>
 	</ul>
 	<br />
 </ul>

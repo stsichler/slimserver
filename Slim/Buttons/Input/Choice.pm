@@ -132,10 +132,10 @@ sub getItemValue {
 	my $item   = getItem($client, $index);
 
 	if (ref($item)) {
-		return $item->{'value'};
+		return $item->{'value'} || '';
 	}
 
-	return $item;
+	return $item || '';
 }
 
 # some values can be mode-wide, or overridden at the list item level
@@ -172,12 +172,6 @@ sub getExtVal {
 		if ($@) {
 
 			logError("Couldn't run coderef. [$@]");
-			
-			if ( main::SLIM_SERVICE ) {
-				my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($value);
-				$@ =~ s/"/'/g;
-				SDI::Util::Syslog::error("service=SS-Choice method=${name} error=\"$@\"");
-			}
 			
 			return '';
 		}
@@ -242,12 +236,6 @@ my %functions = (
 
 				if ($@) {
 					logError("numberScroll caught error: [$@]");
-					
-					if ( main::SLIM_SERVICE ) {
-						my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($onChange);
-						$@ =~ s/"/'/g;
-						SDI::Util::Syslog::error("service=SS-Choice method=${name} error=\"$@\"");
-					}
 				}
 			}
 		}
@@ -314,12 +302,6 @@ sub callCallback {
 		if ($@) {
 
 			logError("Couldn't run callback: [$callbackName] : $@");
-			
-			if ( main::SLIM_SERVICE ) {
-				my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($callback);
-				$@ =~ s/"/'/g;
-				SDI::Util::Syslog::error("service=SS-Choice method=${name} error=\"$@\"");
-			}
 		
 		} elsif (getParam($client,'pref')) {
 		

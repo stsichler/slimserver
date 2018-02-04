@@ -487,18 +487,12 @@ sub curLines {
 
 		if ($@) {
 			logError("bad lines function: $@");
-			
-			if ( main::SLIM_SERVICE ) {
-				my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($linefunc);
-				$@ =~ s/"/'/g;
-				SDI::Util::Syslog::error("service=SS-Display method=${name} error=\"$@\"");
-			}
 		}
 	}
 
 	if (main::INFOLOG && $log->is_info) {
 
-		my $source = Slim::Utils::PerlRunTime::realNameForCodeRef($linefunc);
+		my $source = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($linefunc) : 'unk';
 		my ($line, $sub, @subs);
 		my $frame = 1;
 

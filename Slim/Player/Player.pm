@@ -19,7 +19,6 @@ use Scalar::Util qw(blessed);
 
 use base qw(Slim::Player::Client);
 
-use Slim::Buttons::SqueezeNetwork;
 use Slim::Hardware::IR;
 use Slim::Player::Client;
 use Slim::Player::Source;
@@ -72,12 +71,6 @@ our $defaultPrefs = {
 	'startDelay'           => 0,	# ms
 	'playDelay'            => 0,	# ms
 };
-
-$prefs->migrateClient(9, sub {
-	my $cprefs = shift;
-	$cprefs->set('irmap' => Slim::Hardware::IR::defaultMapFile()) if $cprefs->get('irmap') =~ /SqueezeCenter/i;
-	1;
-});
 
 $prefs->setChange( sub { $_[2]->volume($_[1]); }, 'volume');
 
@@ -325,13 +318,8 @@ sub welcomeScreen {
 
 	return if $client->display->isa('Slim::Display::NoDisplay');
 
-	# SLIM_SERVICE
-	my $line1 = ( main::SLIM_SERVICE ) 
-		? $client->string('WELCOME_TO_APPLICATION')
-		: $client->string('WELCOME_TO_' . $client->model);
-	my $line2 = ( main::SLIM_SERVICE )
-		? $client->string('WELCOME_MESSAGE')
-		: $client->string('FREE_YOUR_MUSIC');
+	my $line1 = $client->string('WELCOME_TO_' . $client->model);
+	my $line2 = $client->string('FREE_YOUR_MUSIC');
 
 	$client->showBriefly( {
 		'center' => [ 
@@ -610,10 +598,6 @@ sub currentSongLines {
 			if ( !$artwork ) {
 				$imgKey  = 'icon-id';
 				$artwork = '/html/images/radio.png';
-				
-				if ( main::SLIM_SERVICE ) {
-					$artwork = Slim::Networking::SqueezeNetwork->url('/static/images/icons/radio.png', 'external');
-				}
 			}
 		}
 		else {
@@ -713,30 +697,7 @@ sub nowPlayingModeLines {
 	my $fractioncomplete = 0;
 	my $songtime = '';
 	
-	my $modes;
-	
-	if ( main::SLIM_SERVICE ) {
-		# Allow buffer fullness display to work on SN where we don't have a playingDisplayModes pref
-		if ( $client->isa('Slim::Player::Transporter') ) {
-			if ( $prefs->client($client)->get('playingDisplayMode') >= 6 ) {
-				$modes = [0..7];
-			}
-		}
-		elsif ( $client->isa('Slim::Player::Boom') ) {
-			if ( $prefs->client($client)->get('playingDisplayMode') >= 10 ) {
-				$modes = [0..11];
-			}
-		}
-		else {
-			if ( $prefs->client($client)->get('playingDisplayMode') >= 12 ) {
-				$modes = [0..13];
-			}
-		}
-	}
-	
-	if ( !defined $modes ) {
-		$modes = $prefs->client($client)->get('playingDisplayModes');
-	}
+	my $modes = $prefs->client($client)->get('playingDisplayModes');
 	
 	my $mode = $modes->[ $prefs->client($client)->get('playingDisplayMode') ];
 
@@ -1041,13 +1002,6 @@ sub publishPlayPoint {
 		if ( abs($apparentStreamStartTime - $meanStartTime) < MAX_STARTTIME_VARIATION ) {
 			# Ok, good enough, publish it!
 			$client->playPoint( [$statusTime, $meanStartTime] );
-			
-			if ( 0 && $synclog->is_debug ) {
-				main::DEBUGLOG && $synclog->debug(
-					$client->id()
-					. " publishPlayPoint: $meanStartTime @ $statusTime"
-				);
-			}
 		}
 	}
 }

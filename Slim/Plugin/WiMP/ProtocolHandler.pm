@@ -38,7 +38,7 @@ sub bufferThreshold {
 	$url = $client->playingSong()->track()->url() unless $url =~ /\.(?:fla?c|mp3)$/;
 	
 	my ($trackId, $format) = _getStreamParams( $url );
-	return ($format eq 'flac' ? 96 : 32) * ($prefs->get('bufferSecs') || 3); 
+	return ($format eq 'flac' ? 80 : 32) * ($prefs->get('bufferSecs') || 3); 
 }
 
 sub canSeek { 1 }
@@ -286,6 +286,7 @@ sub trackInfoURL {
 }
 
 # Track Info menu
+=pod XXX - legacy track info menu from before Slim::Menu::TrackInfo times?
 sub trackInfo {
 	my ( $class, $client, $track ) = @_;
 	
@@ -306,6 +307,7 @@ sub trackInfo {
 	
 	$client->modeParam( 'handledTransition', 1 );
 }
+=cut
 
 # Metadata for a URL, used by CLI/JSON clients
 sub getMetadataFor {
@@ -445,46 +447,6 @@ sub getIcon {
 
 	return Slim::Plugin::WiMP::Plugin->_pluginDataFor('icon');
 }
-
-# SN only, re-init upon reconnection
-sub reinit { if ( main::SLIM_SERVICE ) {
-	my ( $class, $client, $song ) = @_;
-	
-	# Reset song duration/progress bar
-	my $url = $song->track->url();
-	
-	main::DEBUGLOG && $log->is_debug && $log->debug("Re-init TIDAL - $url");
-	
-	my $cache     = Slim::Utils::Cache->new;
-	my ($trackId) = _getStreamParams( $url );
-	my $meta      = $cache->get( 'wimp_meta_' . ($trackId || '') );
-	
-	if ( $meta ) {			
-		# Back to Now Playing
-		Slim::Buttons::Common::pushMode( $client, 'playlist' );
-	
-		# Reset song duration/progress bar
-		if ( $meta->{duration} ) {
-			$song->duration( $meta->{duration} );
-			
-			# On a timer because $client->currentsongqueue does not exist yet
-			Slim::Utils::Timers::setTimer(
-				$client,
-				Time::HiRes::time(),
-				sub {
-					my $client = shift;
-				
-					$client->streamingProgressBar( {
-						url      => $url,
-						duration => $meta->{duration},
-					} );
-				},
-			);
-		}
-	}
-	
-	return 1;
-} }
 
 sub _getStreamParams {
 	if ( $_[0] =~ m{wimp://(.+)\.(m4a|aac|mp3|flac)}i ) {

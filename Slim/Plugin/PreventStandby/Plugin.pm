@@ -56,6 +56,7 @@ my ($handler, $pollInterval);
 my $prefs = preferences('plugin.preventstandby');
 
 $prefs->migrate(1, sub {
+	require Slim::Utils::Prefs::OldPrefs;
 	$prefs->set('idletime', Slim::Utils::Prefs::OldPrefs->get('idletime') || 20);
 	$prefs->set('checkpower', Slim::Utils::Prefs::OldPrefs->get('checkpower') || 0);
 	1;
@@ -78,16 +79,14 @@ sub getDisplayName {
 }
 
 sub initPlugin {
-	if ( !main::SLIM_SERVICE ) {
-		if (main::ISWINDOWS) {
-			require Slim::Plugin::PreventStandby::Win32;
-			$handler = Slim::Plugin::PreventStandby::Win32->new();
-		}
-		
-		elsif ($^O =~/darwin/i) {
-			require Slim::Plugin::PreventStandby::OSX;
-			$handler = Slim::Plugin::PreventStandby::OSX->new();
-		}
+	if (main::ISWINDOWS) {
+		require Slim::Plugin::PreventStandby::Win32;
+		$handler = Slim::Plugin::PreventStandby::Win32->new();
+	}
+	
+	elsif ($^O =~/darwin/i) {
+		require Slim::Plugin::PreventStandby::OSX;
+		$handler = Slim::Plugin::PreventStandby::OSX->new();
 	}
 	
 	if (!$handler) {
@@ -99,11 +98,13 @@ sub initPlugin {
 		Slim::Plugin::PreventStandby::Settings->new;
 	}
 
-	if (my $idletime = $prefs->get('idletime')) {
-		$log->debug("System standby now allowed after $idletime minutes of player idle time.")
-	}
-	else {
-		$log->debug("System standby now prohibited.")
+	if ( main::DEBUGLOG ) {
+		if (my $idletime = $prefs->get('idletime')) {
+			$log->debug("System standby now allowed after $idletime minutes of player idle time.")
+		}
+		else {
+			$log->debug("System standby now prohibited.")
+		}
 	}
 	
 	$pollInterval = $handler->pollInterval || INTERVAL;

@@ -20,7 +20,6 @@ use XML::Simple;
 
 use Slim::Music::Info;
 use Slim::Networking::SimpleAsyncHTTP;
-use Slim::Networking::SqueezeNetwork;
 use Slim::Player::Protocols::HTTP;
 use Slim::Utils::Cache;
 use Slim::Utils::Misc;
@@ -31,13 +30,6 @@ use Slim::Utils::Strings qw(string);
 # How long to cache parsed XML data
 our $XML_CACHE_TIME = 300;
 
-# trying to track down a bug
-my %tb;
-if ( main::SLIM_SERVICE ) {
-	require Algorithm::TokenBucket;
-	tie %tb, 'Tie::Cache::LRU', 100;
-}
-
 my $log   = logger('formats.xml');
 my $prefs = preferences('server');
 
@@ -47,7 +39,7 @@ sub _cacheKey {
 	my $cachekey = $url;
 	
 	if ($client) {
-		$cachekey .= '-' . (main::SLIM_SERVICE ? $client->language : $client->languageOverride);
+		$cachekey .= '-' . ($client->languageOverride || '');
 	}
 	
 	return $cachekey . '_parsedXML';
@@ -94,6 +86,34 @@ sub getFeedAsync {
 		}
 	}
 
+	# if we have a single item, we might need to expand it to some list (eg. Spotify Album -> track list)
+	my $handler = Slim::Player::ProtocolHandlers->handlerForURL($url) unless $feed;
+
+	if ( $handler && $handler->can('explodePlaylist') ) {
+		$handler->explodePlaylist($params->{client}, $url, sub {
+			my ($tracks) = @_;
+
+			return $cb->({
+				'type'  => 'opml',
+				'title' => '',
+				'items' => [
+					map {
+						{
+							# compatable with INPUT.Choice, which expects 'name' and 'value'
+							'name'  => $_,
+							'value' => $_,
+							'url'   => $_,
+							'type'  => 'audio',
+							'items' => [],
+						}
+					} @{$tracks || []}
+				],
+			}, $params);
+		});
+		
+		return;
+	}
+
 	if ($feed) {
 		return $cb->( $feed, $params );
 	}
@@ -120,51 +140,22 @@ sub getFeedAsync {
 		'User-Agent'   => $ua,
 		'Icy-Metadata' => '',
 	);
-	
-	if ( main::SLIM_SERVICE && $url =~ /(?:radiotime|tunein\.com)/ ) {
-		# Add real client IP for Radiotime so they can do proper geo-location
-		$headers{'X-Forwarded-For'} = $params->{client}->ip;
-		
-=pod
-		# XXX try to track down a bug
-		my $b = $tb{ $params->{client}->ip };
-		if ( $b ) {
-			if ( !$b->conform(1) ) {
-				# wipe bucket
-				delete $tb{ $params->{client}->ip };
-				
-				# Fail
-				$ecb->( string('ERROR_RATE_LIMITED'), $params );
-				return;
-			}
-			else {
-				$b->count(1);
-			}
-		}
-		else {
-			# 1 req every 2 seconds, burst 5
-			$tb{ $params->{client}->ip } = Algorithm::TokenBucket->new( 0.5, 5 );
-		}
-=cut
-	}
 
 	if ( $url =~ /(?:radiotime|tunein\.com)/ ) {
-		# Add the RadioTime username
+		# Add the TuneIn username
 		if ( $url !~ /username/ && $url =~ /(?:presets|title)/ 
-			&& ( my $username = Slim::Plugin::RadioTime::Plugin->getUsername($params->{client}) )
+			&& Slim::Utils::PluginManager->isEnabled('Slim::Plugin::InternetRadio::Plugin') 
+			&& ( my $username = Slim::Plugin::InternetRadio::TuneIn->getUsername($params->{client}) )
 		) {
 			$url .= '&username=' . uri_escape_utf8($username);
 		}
 	}
 	
 	# If the URL is on SqueezeNetwork, add session headers or login first
-	if ( Slim::Networking::SqueezeNetwork->isSNURL($url) && !$params->{no_sn} ) {
+	if ( !main::NOMYSB && Slim::Networking::SqueezeNetwork->isSNURL($url) && !$params->{no_sn} ) {
 		
 		# Sometimes from the web we won't have a client, so pick a random one
-		# (Never use random client on SN)
-		if ( !main::SLIM_SERVICE ) {
-			$params->{client} ||= Slim::Player::Client::clientRandom();
-		}
+		$params->{client} ||= Slim::Player::Client::clientRandom();
 		
 		my %snHeaders = Slim::Networking::SqueezeNetwork->getHeaders( $params->{client} );
 		while ( my ($k, $v) = each %snHeaders ) {
@@ -305,14 +296,6 @@ sub gotViaHTTP {
 
 			$expires = $XML_CACHE_TIME;
 		}
-		
-		# Bug 14409, don't cache the RadioTime local menu on SN
-		if ( main::SLIM_SERVICE ) {
-			if ( $http->url =~ /radiotime.*local/ ) {
-				$feed->{nocache} = 1;
-				$expires = 0;
-			}
-		}
 
 		if ( !$feed->{'nocache'} ) {
 
@@ -382,6 +365,8 @@ sub parseXMLIntoFeed {
 		return parseOPML($xml);
 		
 	} elsif ($xml && $xml->{'entry'}) {
+
+		main::DEBUGLOG && $log->is_debug && $log->debug("Parsing body as Atom");
 		
 		# It's Atom
 		return parseAtom($xml);
@@ -550,6 +535,22 @@ sub parseAtom {
 			# image is included in each item due to the way XMLBrowser works
 			'image'       => $feed{'image'},
 		);
+		
+		# some Atom streams come with multiple link items, one of them pointing to the stream (enclosure)
+		# create a valid enclosure element our XMLBrowser implementations understand
+		if ( !$item{link} && $itemXML->{link} && ref $itemXML->{link} && ref $itemXML->{link} eq 'ARRAY' ) {
+			my @links = grep {
+				$_->{rel} && lc($_->{rel}) eq 'enclosure'
+			} @{$itemXML->{link}};
+
+			if (scalar @links) {
+				$item{enclosure} = {
+					url => $links[0]->{href},
+					type => $links[0]->{type},
+					duration => $itemXML->{'itunes:duration'}
+				};
+			}
+		}
 
 		# this is a convencience for using INPUT.Choice later.
 		# it expects each item in it list to have some 'value'

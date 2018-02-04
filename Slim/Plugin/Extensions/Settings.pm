@@ -9,6 +9,8 @@ use Slim::Utils::OSDetect;
 
 use Digest::MD5;
 
+use constant MAX_DOWNLOAD_WAIT => 20;
+
 my $prefs = preferences('plugin.extensions');
 my $log   = logger('plugin.extensions');
 
@@ -66,17 +68,6 @@ sub handler {
 		}
 
 		$prefs->set('repos', \@new) if $changed;
-
-		if ($params->{'otherrepo'} && !$prefs->get('otherrepo')) {
-
-			Slim::Plugin::Extensions::Plugin->addRepo({ other => 1 });
-			$prefs->set('otherrepo', 1);
-
-		} elsif (!$params->{'otherrepo'} && $prefs->get('otherrepo')) {
-
-			Slim::Plugin::Extensions::Plugin->removeRepo({ other => 1 });
-			$prefs->set('otherrepo', 0);
-		}
 
 		# set policy for which plugins are installed/uninstalled etc
 
@@ -140,8 +131,27 @@ sub _getReposCB {
 	}
 
 	if ( --$data->{'remaining'} <= 0 ) {
+		
+		my $pageInfo = $class->_addInfo($client, $params, $data);
+		
+		my $finalize;
+		my $timeout = MAX_DOWNLOAD_WAIT;
+		
+		$finalize = sub {
+			Slim::Utils::Timers::killTimers(undef, $finalize);
+			
+			# if a plugin is still being downloaded, wait a bit longer, or the user might restart the server before we're done
+			if ( $timeout-- > 0 && Slim::Utils::PluginDownloader->downloading ) {
+				Slim::Utils::Timers::setTimer(undef, time() + 1, $finalize);
+				
+				main::DEBUGLOG && $log->is_debug && $log->debug("PluginDownloader is still busy - waiting a little longer...");
+				return;
+			}
+			
+			$callback->($client, $params, $pageInfo, @$args);
+		};
 
-		$callback->($client, $params, $class->_addInfo($client, $params, $data), @$args);
+		$finalize->();
 	}
 }
 
@@ -161,7 +171,16 @@ sub _addInfo {
 
 	for my $plugin (keys %$plugins) {
 
+		if ( main::NOMYSB && ($plugins->{$plugin}->{needsMySB} && $plugins->{$plugin}->{needsMySB} !~ /false|no/i) ) {
+			main::DEBUGLOG && $log->debug("Skipping plugin: $plugin - requires mysqueezebox.com, but support for mysqueezebox.com is disabled.");
+			next;
+		}
+
 		my $entry = $plugins->{$plugin};
+
+		# don't show enforced plugins
+		next if $entry->{'enforce'};
+
 		my $state = $states->get($plugin);
 
 		my $entry = {
@@ -271,10 +290,10 @@ sub _addInfo {
 	$params->{'inactive'} = \@inactive;
 	$params->{'avail'}    = \@results;
 	$params->{'repos'}    = \@repos;
-	$params->{'otherrepo'}= $prefs->get('otherrepo');
 	$params->{'auto'}     = $prefs->get('auto');
 	$params->{'rand'}     = $rand;
 
+	# don't offer the restart before the plugin download has succeeded.
 	my $needsRestart = Slim::Utils::PluginManager->needsRestart || Slim::Utils::PluginDownloader->downloading;
 
 	$params->{'warning'} = $needsRestart ? Slim::Utils::Strings::string("PLUGIN_EXTENSIONS_RESTART_MSG") : '';

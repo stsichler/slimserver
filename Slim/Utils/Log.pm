@@ -92,7 +92,7 @@ sub init {
 	}
 
 	# call poor man's log rotation
-	if (!main::SCANNER && !main::SLIM_SERVICE) {
+	if (!main::SCANNER) {
 		
 		Slim::Utils::OSDetect::getOS->logRotate($logDir);
 	}
@@ -721,10 +721,6 @@ sub defaultConfigFile {
 	my $dir;
 	eval { $dir = Slim::Utils::Prefs::dir() };
 	$dir ||= Slim::Utils::OSDetect::dirsFor('prefs');
-	
-	if ( main::SLIM_SERVICE ) {
-		$dir = Slim::Utils::OSDetect::dirsFor('log');
-	}
 
 	if (defined $dir && -d $dir) {
 
@@ -821,6 +817,7 @@ sub logGroups {
 				'scan.scanner'           => 'DEBUG',
 				'scan.import'            => 'DEBUG',
 				'artwork'                => 'DEBUG',
+				'database.info'          => 'DEBUG',
 				'plugin.itunes'          => 'DEBUG',
 				'plugin.musicip'         => 'DEBUG',
 			},
@@ -886,7 +883,6 @@ sub logLevels {
 		'network.protocol.slimp3'    => 'ERROR',
 		'network.upnp'               => 'ERROR',
 		'network.jsonrpc'            => 'ERROR',
-		'network.squeezenetwork'     => 'ERROR',
 		'network.cometd'             => 'ERROR',
 
 		'formats.audio'              => 'ERROR',
@@ -897,6 +893,7 @@ sub logLevels {
 		'database.info'              => 'ERROR',
 		'database.mysql'             => 'ERROR',
 		'database.sql'               => 'ERROR',
+		'database.virtuallibraries'  => 'ERROR',
 
 		'os.files'                   => 'ERROR',
 		'os.paths'                   => 'ERROR',
@@ -933,6 +930,8 @@ sub logLevels {
 		'perfmon'                    => 'WARN, screen-raw, perfmon', # perfmon assumes this is set to WARN
 	};
 	
+	$categories->{'network.squeezenetwork'} = 'ERROR' unless main::NOMYSB;
+
 	return $categories unless $group;
 	
 	my $logGroups = logGroups();
@@ -1065,12 +1064,12 @@ sub _fixupAppenders {
 
 	if ($::LogTimestamp) {
 
-		$pattern    = '[%d{yy-MM-dd HH:mm:ss.SSSS}] %M (' . (main::SLIM_SERVICE ? '%P:' : '') . '%L) %m%n';
+		$pattern    = '[%d{yy-MM-dd HH:mm:ss.SSSS}] %M (%L) %m%n';
 		$rawpattern = '[%d{yy-MM-dd HH:mm:ss.SSSS}] %m%n';
 
 	} else {
 
-		$pattern = '%M (' . (main::SLIM_SERVICE ? '%P:' : '') . '%L) %m%n';
+		$pattern = '%M (%L) %m%n';
 		$rawpattern = '%m%n';
 	}
 

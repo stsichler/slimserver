@@ -43,6 +43,7 @@ our @EXPORT_OK = qw(string cstring clientString);
 use Config;
 use Digest::SHA1 qw(sha1_hex);
 use POSIX qw(setlocale LC_TIME LC_COLLATE);
+use File::Basename;
 use File::Slurp qw(read_file write_file);
 use File::Spec::Functions qw(:ALL);
 use JSON::XS::VersionOneAndTwo;
@@ -77,7 +78,9 @@ Initializes the module - called at server startup.
 
 sub init {
 	$currentLang = getLanguage();
-	loadStrings();
+	loadStrings(main::SCANNER ? {
+		dontSave => 1
+	} : undef);
 	setLocale();
 
 	if ($::checkstrings) {
@@ -105,7 +108,7 @@ optional $argshash allows default behavious to be overridden, keys that can be s
 sub loadStrings {
 	my $args = shift;
 
-	my ($newest, $sum, $files) = stringsFiles();
+	my ($newest, $sum, $files, $pluginStrings) = stringsFiles();
 
 	my $stringCache = catdir( $prefs->get('cachedir'),
 		Slim::Utils::OSDetect::OS() eq 'unix' ? 'stringcache' : 'strings');
@@ -139,6 +142,10 @@ sub loadStrings {
 			$cacheOK = 0;
 		}
 
+		# Shortcut for the scanner: it's unlikely the strings have changed without a server restart.
+		# No need to run the other cache validity checks. This saves us parsing strings files twice.
+		return if $cacheOK && main::SCANNER;
+
 		# check sum of mtimes matches that stored in stringcache
 		if ($cacheOK && $strings->{'mtimesum'} && $strings->{'mtimesum'} != $sum) {
 			$cacheOK = 0;
@@ -162,6 +169,28 @@ sub loadStrings {
 		} else {
 			$cacheOK = 0;
 		}
+		
+		# check for same list of disabled plugins
+		if ($cacheOK && scalar keys %{$pluginStrings || {}} == scalar keys %{$strings->{pluginStrings} || {}}) {
+			
+			foreach my $dir ( keys %{$pluginStrings || {}} ) {
+				if ($strings->{pluginStrings}->{$dir}) {
+					my $oldTokens = [ sort keys %{$strings->{pluginStrings}->{$dir}} ];
+					my $newTokens = [ sort keys %{$pluginStrings->{$dir}} ];
+
+					if ( @$oldTokens != @$newTokens || keys %{ Slim::Utils::Misc::arrayDiff($oldTokens, $newTokens) } ) {
+						$cacheOK = 0;
+						last;
+					}
+				}
+				else {
+					$cacheOK = 0;
+					last;
+				}
+			}
+		} else {
+			$cacheOK = 0;
+		}
 
 		return if $cacheOK;
 
@@ -176,6 +205,7 @@ sub loadStrings {
 			'lang'           => $currentLang,
 			'files'          => $files,
 			'serverRevision' => $::REVISION,
+			'pluginStrings'  => $pluginStrings
 		};
 	}
 
@@ -202,13 +232,18 @@ sub loadStrings {
 
 sub loadAdditional {
 	my $lang = shift;
+
+	# some devices request ZH_HANS rather than ZH_CN for Chinese
+	if ( $lang =~ /^ZH_HAN.$/i && !exists $strings->{'langchoices'}->{$lang} ) {
+		$lang = 'ZH_CN';
+	}
 	
 	if ( exists $strings->{$lang} ) {
 		return $strings->{$lang};
 	}
 	
 	for my $file ( @{ $strings->{files} } ) {
-		main::INFOLOG && $log->info("Loading string file for additional language $lang: $file");
+		main::DEBUGLOG && $log->is_debug && $log->debug("Loading string file for additional language $lang: $file");
 		
 		my $args = {
 			storeString => sub {
@@ -240,6 +275,10 @@ sub stringsFiles {
 	my $serverPath = Slim::Utils::OSDetect::dirsFor('strings');
 	my @pluginDirs = Slim::Utils::PluginManager->dirsFor('strings');
 
+	my $pluginStrings;
+	# PluginManager would return a list of tokens for disabled plugins
+	$pluginStrings = pop @pluginDirs if ref $pluginDirs[-1];
+	
 	push @files, catdir($serverPath, 'strings.txt');
 
 	# plugin string files
@@ -253,11 +292,6 @@ sub stringsFiles {
 	# plugin custom string files
 	for my $path ( @pluginDirs ) {
 		push @files, catdir($path, 'custom-strings.txt');
-	}
-	
-	if ( main::SLIM_SERVICE ) {
-		push @files, catdir($serverPath, 'slimservice-strings.txt');
-		push @files, catdir($main::SN_PATH, 'docroot', 'strings.txt');
 	}
 
 	# prune out files which don't exist and find newest
@@ -275,7 +309,7 @@ sub stringsFiles {
 		}
 	}
 
-	return $newest, $sum, \@files;
+	return $newest, $sum, \@files, $pluginStrings;
 }
 
 sub loadFile {
@@ -300,7 +334,10 @@ sub parseStrings {
 	my $language = '';
 	my $stringname = '';
 	my $stringData = {};
+	my $pluginStrings;
 	my $ln = 0;
+	
+	$pluginStrings = $strings->{pluginStrings}->{dirname($file)} if $strings->{pluginStrings};
 
 	my $store = $args->{'storeString'} || \&storeString;
 
@@ -316,7 +353,7 @@ sub parseStrings {
 
 		if ($line =~ /^(\S+)$/) {
 
-			&$store($stringname, $stringData, $file, $args);
+			&$store($stringname, $stringData, $file, $args) if !$pluginStrings || $pluginStrings->{$stringname};
 
 			$stringname = $1;
 			$stringData = {};
@@ -352,28 +389,20 @@ sub parseStrings {
 		}
 	}
 
-	&$store($stringname, $stringData, $file, $args);
+	&$store($stringname, $stringData, $file, $args) if !$pluginStrings || $pluginStrings->{$stringname};
 }
 
 sub storeString {
 	my $name = shift || return;
 	my $curString = shift;
-	my $file = shift;
+	my $file = shift || 'unknown';
 	my $args = shift;
 
 	return if ($name eq 'LANGUAGE_CHOICES');
-	
-	if ( main::SLIM_SERVICE ) {
-		# Store all languages so we can have per-client language settings
-		for my $lang ( keys %{ $strings->{langchoices} } ) {
-			$strings->{$lang}->{$name} = $curString->{$lang} || $curString->{$failsafeLang};
-		}
-		return;
-	}
 
-	if ($log->is_info && defined $strings->{$currentLang}->{$name} && defined $curString->{$currentLang} && 
+	if (main::DEBUGLOG && $log->is_debug && defined $strings->{$currentLang}->{$name} && defined $curString->{$currentLang} && 
 			$strings->{$currentLang}->{$name} ne $curString->{$currentLang}) {
-		main::INFOLOG && $log->info("redefined string: $name in $file");
+		$log->debug("redefined string: $name in $file");
 	}
 
 	if (defined $curString->{$currentLang}) {
@@ -381,7 +410,7 @@ sub storeString {
 
 	} elsif (defined $curString->{$failsafeLang}) {
 		$strings->{$currentLang}->{$name} = $curString->{$failsafeLang};
-		main::DEBUGLOG && $log->is_debug && $log->debug("Language $currentLang using $failsafeLang for $name in". (defined $file ? $file : 'undefined'));
+		main::DEBUGLOG && $log->is_debug && $log->debug("Language $currentLang using $failsafeLang for $name in $file");
 	}
 
 	if ($args->{'storeFailsafe'} && defined $curString->{$failsafeLang}) {
@@ -412,6 +441,7 @@ sub storeExtraStrings {
 		
 		$extraStringsCache = eval { from_json( read_file($extraCache) ) };
 		if ( $@ ) {
+			$log->error("Failed to read extrastrings.json file: $@");
 			$extraStringsCache = {};
 		}
 	}
@@ -438,6 +468,12 @@ sub storeExtraStrings {
 	}
 
 	if ( $extraStringsDirty ) {
+		# secondary languages need to be refreshed - remove the cached data
+		foreach (keys %{ languageOptions() }) {
+			next if $_ eq $currentLang;
+			delete $strings->{$_} if $strings->{$_};
+		}
+	
 		# Batch changes to avoid lots of writes
 		Slim::Utils::Timers::killTimers( $extraCache, \&_writeExtraStrings );
 		Slim::Utils::Timers::setTimer( $extraCache, time() + 5, \&_writeExtraStrings );
@@ -451,6 +487,8 @@ sub _writeExtraStrings {
 	
 	$extraStringsDirty = 0;
 	eval { write_file( $extraCache, to_json($extraStringsCache) ) };
+
+	$log->error("Failed to write extrastrings.json file: $@") if $@;
 };
 
 =head2 loadExtraStrings
@@ -462,8 +500,8 @@ Load cached additional strings delivered from SN.
 sub loadExtraStrings {
 	my $extraCache = catdir( $prefs->get('cachedir'), 'extrastrings.json' );
 	
-	my $cache = {};
-	if ( -e $extraCache ) {
+	my $cache = $extraStringsCache || {};
+	if ( !($cache && keys %$cache) && -e $extraCache ) {
 		$cache = eval { from_json( read_file($extraCache) ) };
 	}
 	
@@ -485,7 +523,7 @@ sub string {
 	my $token = uc(shift);
 
 	my $string = $defaultStrings->{$token};
-	logBacktrace("missing string $token") if ($token && !defined $string);
+	logBacktrace("missing string $token") if ($token && !defined $string && $log->is_info);
 
 	if ( @_ ) {
 		return sprintf( $string, @_ );
@@ -607,14 +645,6 @@ sub failsafeLanguage {
 
 sub clientStrings {
 	my $client = shift;
-	
-	if ( main::SLIM_SERVICE ) {
-		if ( my $override = $client->languageOverride ) {
-			return $strings->{ $override } || $strings->{ $failsafeLang };
-		}
-		
-		return $strings->{ $prefs->client($client)->get('language') } || $strings->{$failsafeLang};
-	}
 	
 	my $display = $client->display;
 

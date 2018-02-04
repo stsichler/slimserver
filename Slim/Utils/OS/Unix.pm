@@ -30,7 +30,7 @@ sub initDetails {
 sub initSearchPath {
 	my $class = shift;
 
-	$class->SUPER::initSearchPath();
+	$class->SUPER::initSearchPath(@_);
 
 	my @paths = (split(/:/, ($ENV{'PATH'} || '/sbin:/usr/sbin:/bin:/usr/bin')), qw(/usr/bin /usr/local/bin /usr/libexec /sw/bin /usr/sbin /opt/bin));
 	
@@ -52,7 +52,7 @@ sub dirsFor {
 	my @dirs = $class->SUPER::dirsFor($dir);
 	
 	# some defaults
-	if ($dir =~ /^(?:strings|revision|convert|types)$/) {
+	if ($dir =~ /^(?:strings|revision|convert|types|repositories)$/) {
 
 		push @dirs, $Bin;
 
@@ -69,7 +69,7 @@ sub dirsFor {
 		push @dirs, '';
 
 	# we don't want these values to return a(nother) value
-	} elsif ($dir =~ /^(?:libpath|mysql-language|updates)$/) {
+	} elsif ($dir =~ /^(?:libpath|mysql-language)$/) {
 
 	} elsif ($dir eq 'prefs' && $::prefsdir) {
 		

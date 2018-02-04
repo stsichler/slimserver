@@ -465,9 +465,6 @@ my $log = logger('control.command');
 # adds standard commands and queries to the dispatch DB...
 sub init {
 
-	# Allow deparsing of code ref function names.
-	Slim::bootstrap::tryModuleLoad('Slim::Utils::PerlRunTime');
-
 ######################################################################################################################################################################
 #	                                                                                                    |requires Client
 #	                                                                                                    |  |is a Query
@@ -511,6 +508,8 @@ sub init {
 	addDispatch(['ir',             '_ircode',        '_time'],                                         [1, 0, 0, \&Slim::Control::Commands::irCommand]);
 	addDispatch(['irenable',       '?'],                                                               [1, 1, 0, \&Slim::Control::Queries::irenableQuery]);
 	addDispatch(['irenable',       '_newvalue'],                                                       [1, 0, 0, \&Slim::Control::Commands::irenableCommand]);
+	addDispatch(['libraries'],                                                                         [0, 1, 0, \&Slim::Control::Queries::librariesQuery]);
+	addDispatch(['libraries',      'getid'],                                                           [1, 1, 0, \&Slim::Control::Queries::librariesQuery]);
 	addDispatch(['linesperscreen', '?'],                                                               [1, 1, 0, \&Slim::Control::Queries::linesperscreenQuery]);
 	addDispatch(['logging'],                                                                           [0, 0, 1, \&Slim::Control::Commands::loggingCommand]);
 	addDispatch(['mixer',          'bass',           '?'],                                             [1, 1, 0, \&Slim::Control::Queries::mixerQuery]);
@@ -563,7 +562,7 @@ sub init {
 	addDispatch(['playlist',       'genre',          '_index',     '?'],                               [1, 1, 0, \&Slim::Control::Queries::playlistXQuery]);
 	addDispatch(['playlist',       'index',          '?'],                                             [1, 1, 0, \&Slim::Control::Queries::playlistXQuery]);
 	addDispatch(['playlist',       'index',          '_index',     '_fadein', '_noplay', '_seekdata'], [1, 0, 0, \&Slim::Control::Commands::playlistJumpCommand]);
-	addDispatch(['playlist',       'insert',         '_item'],                                         [1, 0, 0, \&Slim::Control::Commands::playlistXitemCommand]);
+	addDispatch(['playlist',       'insert',         '_item',      '_title'],                          [1, 0, 0, \&Slim::Control::Commands::playlistXitemCommand]);
 	addDispatch(['playlist',       'insertlist',     '_item'],                                         [1, 0, 0, \&Slim::Control::Commands::playlistXitemCommand]);
 	addDispatch(['playlist',       'insertalbum',    '_genre',     '_artist',     '_album', '_title'], [1, 0, 0, \&Slim::Control::Commands::playlistXalbumCommand]);
 	addDispatch(['playlist',       'inserttracks',   '_what',      '_listref'],                        [1, 0, 0, \&Slim::Control::Commands::playlistXtracksCommand]);
@@ -612,7 +611,7 @@ sub init {
 	addDispatch(['restartserver'],                                                                     [0, 0, 0, \&Slim::Control::Commands::stopServer]);
 	addDispatch(['search',         '_index',         '_quantity'],                                     [0, 1, 1, \&Slim::Control::Queries::searchQuery]);
 	addDispatch(['serverstatus',   '_index',         '_quantity'],                                     [0, 1, 1, \&Slim::Control::Queries::serverstatusQuery]);
-	addDispatch(['setsncredentials','_username',     '_password'],                                     [0, 0, 1, \&Slim::Control::Commands::setSNCredentialsCommand]);
+	addDispatch(['setsncredentials','_username',     '_password'],                                     [0, 0, 1, \&Slim::Control::Commands::setSNCredentialsCommand]) unless main::NOMYSB;
 	addDispatch(['show'],                                                                              [1, 0, 1, \&Slim::Control::Commands::showCommand]);
 	addDispatch(['signalstrength', '?'],                                                               [1, 1, 0, \&Slim::Control::Queries::signalstrengthQuery]);
 	addDispatch(['sleep',          '?'],                                                               [1, 1, 0, \&Slim::Control::Queries::sleepQuery]);
@@ -631,7 +630,7 @@ sub init {
 	addDispatch(['titles',         '_index',         '_quantity'],                                     [0, 1, 1, \&Slim::Control::Queries::titlesQuery]);
 	addDispatch(['tracks',         '_index',         '_quantity'],                                     [0, 1, 1, \&Slim::Control::Queries::titlesQuery]);
 	addDispatch(['version',        '?'],                                                               [0, 1, 0, \&Slim::Control::Queries::versionQuery]);
-	addDispatch(['wipecache'],                                                                         [0, 0, 0, \&Slim::Control::Commands::wipecacheCommand]);
+	addDispatch(['wipecache',      '_queue'],                                                          [0, 0, 0, \&Slim::Control::Commands::wipecacheCommand]);
 	addDispatch(['years',          '_index',         '_quantity'],                                     [0, 1, 1, \&Slim::Control::Queries::yearsQuery]);
 	addDispatch(['artwork',        '_artworkid'],                                                      [0, 0, 0, \&Slim::Control::Queries::showArtwork]);
 	addDispatch(['rating',         '_item',          '?'],                                             [0, 1, 0, \&Slim::Control::Commands::ratingCommand]);
@@ -801,8 +800,8 @@ sub subscribe {
 	# rebuild the super regexp for the current list of listeners
 	__updateListenerSuperRE();
 
-	if ( main::INFOLOG && $log->is_info ) {
-		$log->info(sprintf(
+	if ( main::DEBUGLOG && $log->is_debug ) {
+		$log->debug(sprintf(
 			"Request from: %s - (%d listeners)\n",
 			Slim::Utils::PerlRunTime::realNameForCodeRef($subscriberFuncRef),
 			scalar(keys %listeners)
@@ -825,8 +824,8 @@ sub unsubscribe {
 	# rebuild the super regexp for the current list of listeners
 	__updateListenerSuperRE();
 
-	if ( main::INFOLOG && $log->is_info ) {
-		$log->info(sprintf(
+	if ( main::DEBUGLOG && $log->is_debug ) {
+		$log->debug(sprintf(
 			"Request from: %s - (%d listeners)\n",
 			Slim::Utils::PerlRunTime::realNameForCodeRef($subscriberFuncRef),
 			scalar(keys %listeners)
@@ -1885,15 +1884,10 @@ sub execute {
 
 		if ($@) {
 			my $error = "$@";
-			my $funcName = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
+			my $funcName = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr) : 'unk';
 			logError("While trying to run function coderef [$funcName]: [$error]");
 			$self->setStatusBadDispatch();
 			$self->dump('Request');
-			
-			if ( main::SLIM_SERVICE ) {
-				$@ =~ s/"/'/g;
-				SDI::Util::Syslog::error("service=SS-Request method=${funcName} error=\"$@\"");
-			}
 		}
 	}
 	
@@ -1963,12 +1957,6 @@ sub jumpbacktofunc {
 
 			$self->setStatusBadDispatch();
 			$self->dump('Request');
-			
-			if ( main::SLIM_SERVICE ) {
-				my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
-				$@ =~ s/"/'/g;
-				SDI::Util::Syslog::error("service=SS-Request method=${name} error=\"$@\"");
-			}
 		}
 	}
 	
@@ -1997,12 +1985,6 @@ sub callback {
 				if ($@) { 
 					logError("While trying to run function coderef: [$@]");
 					$self->dump('Request');
-					
-					if ( main::SLIM_SERVICE ) {
-						my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
-						$@ =~ s/"/'/g;
-						SDI::Util::Syslog::error("service=SS-Request method=${name} error=\"$@\"");
-					}
 				}
 			
 			# else use the provided arguments
@@ -2013,12 +1995,6 @@ sub callback {
 				if ($@) { 
 					logError("While trying to run function coderef: [$@]");
 					$self->dump('Request');
-					
-					if ( main::SLIM_SERVICE ) {
-						my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
-						$@ =~ s/"/'/g;
-						SDI::Util::Syslog::error("service=SS-Request method=${name} error=\"$@\"");
-					}
 				}
 			}
 		}
@@ -2083,12 +2059,6 @@ sub notify {
 			
 			if ($@) {
 				logError("Failed notify: $@");
-				
-				if ( main::SLIM_SERVICE ) {
-					my $name = Slim::Utils::PerlRunTime::realNameForCodeRef($notifyFuncRef);
-					$@ =~ s/"/'/g;
-					SDI::Util::Syslog::error("service=SS-Request method=${name} error=\"$@\"");
-				}
 			}
 			
 			main::PERFMON && Slim::Utils::PerfMon->check('notify', AnyEvent->time - $now, undef, $notifyFuncRef);
@@ -2114,13 +2084,8 @@ sub notify {
 						eval { $relevant = &{$funcPtr}($request, $self) };
 				
 						if ($@) {
-							my $funcName = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
+							my $funcName = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr) : 'unk';
 							logError("While trying to run function coderef [$funcName]: [$@]");
-							
-							if ( main::SLIM_SERVICE ) {
-								$@ =~ s/"/'/g;
-								SDI::Util::Syslog::error("service=SS-Request method=${funcName} error=\"$@\"");
-							}
 							
 							next;
 						}
@@ -2527,14 +2492,9 @@ sub __autoexecute{
 
 	# oops, failed
 	if ($@) {
-		my $funcName = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
+		my $funcName = main::DEBUGLOG ? Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr) : 'unk';
 		logError("While trying to run function coderef [$funcName]: [$@] => deleting subscription");
 		$deleteSub = 1;
-		
-		if ( main::SLIM_SERVICE ) {
-			$@ =~ s/"/'/g;
-			SDI::Util::Syslog::error("service=SS-Request method=${funcName} error=\"$@\"");
-		}
 	}
 	
 	if ($deleteSub) {

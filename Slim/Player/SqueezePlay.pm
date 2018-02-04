@@ -21,14 +21,8 @@ my $prefs = preferences('server');
 my $log = logger('network.protocol.slimproto');
 
 BEGIN {
-	if ( main::SLIM_SERVICE ) {
-		require SDI::Service::Player::SqueezeNetworkClient;
-		push @ISA, qw(SDI::Service::Player::SqueezeNetworkClient);
-	}
-	else {
-		require Slim::Player::Squeezebox2;
-		push @ISA, qw(Slim::Player::Squeezebox2);
-	}
+	require Slim::Player::Squeezebox2;
+	push @ISA, qw(Slim::Player::Squeezebox2);
 }
 
 {
@@ -44,8 +38,10 @@ BEGIN {
 		hasDigitalOut
 		hasPreAmp
 		hasDisableDac
+		hasPolarityInversion
 		spDirectHandlers
 		proxyAddress
+		_canHTTPS
 	));
 }
 
@@ -63,9 +59,11 @@ sub new {
 		firmware                => 0,
 		canDecodeRhapsody       => 0,
 		canDecodeRtmp           => 0,
+		_canHTTPS               => 0,
 		hasDigitalOut           => 0,
 		hasPreAmp               => 0,
 		hasDisableDac           => 0,
+		hasPolarityInversion    => 0,
 		spDirectHandlers        => undef,
 		proxyAddress            => undef,
 	);
@@ -86,9 +84,11 @@ my %CapabilitiesMap = (
 	HasDigitalOut           => 'hasDigitalOut',
 	HasPreAmp               => 'hasPreAmp',
 	HasDisableDac           => 'hasDisableDac',
+	HasPolarityInversion    => 'hasPolarityInversion',
 	SyncgroupID             => undef,
 	Spdirect                => 'spDirectHandlers',
 	Proxy                   => 'proxyAddress',
+	CanHTTPS                => '_canHTTPS',
 
 	# deprecated
 	model                   => '_model',
@@ -97,6 +97,10 @@ my %CapabilitiesMap = (
 
 sub model {
 	return shift->_model;
+}
+
+sub canHTTPS {
+	return shift->_canHTTPS;
 }
 
 # This will return the full version + revision, i.e. 7.5.0 r8265

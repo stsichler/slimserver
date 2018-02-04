@@ -63,7 +63,7 @@ use Slim::Utils::Progress;
 {
 	my $class = __PACKAGE__;
 
-	for my $accessor (qw(cleanupDatabase scanPlaylistsOnly scanningProcess doQueueScanTasks)) {
+	for my $accessor (qw(scanPlaylistsOnly scanningProcess doQueueScanTasks)) {
 
 		$class->mk_classdata($accessor);
 	}
@@ -225,10 +225,16 @@ sub lastScanTime {
 
 	# May not have a DB
 	return 0 if !Slim::Schema::hasLibrary();
-	
-	my $last  = Slim::Schema->single('MetaInformation', { 'name' => $name });
 
-	return blessed($last) ? $last->value : 0;
+	my $sth = Slim::Schema->dbh->prepare_cached(
+		"SELECT value FROM metainformation WHERE name = ?"
+	);
+
+	$sth->execute($name);
+	my ($last) = $sth->fetchrow_array;
+	$sth->finish;
+	
+	return $last || 0;
 }
 
 =head2 setLastScanTime()
@@ -471,15 +477,6 @@ Code reference to reset the state of the importer.
 
 True if the importer supports scanning playlists only.
 
-=item * mixer => \&mixerFunction
-
-Generate a mix using criteria from the client's parentParams or
-modeParamStack.
-
-=item * mixerlink => \&mixerlink
-
-Generate an HTML link for invoking the mixer.
-
 =back
 
 =cut
@@ -666,7 +663,6 @@ Returns scan type string token if the server is still scanning your library. Fal
 sub stillScanning {
 	my $class = __PACKAGE__;
 	
-	return 0 if main::SLIM_SERVICE;
 	return 0 if !Slim::Schema::hasLibrary();
 	
 	# clean up progress etc. in case the external scanner crashed
@@ -709,8 +705,8 @@ sub _checkLibraryStatus {
 sub initScanQueue {
 	my $class = shift;
 
-	if ( %scanQueue || main::SLIM_SERVICE || main::SCANNER ) {
-		main::DEBUGLOG && $log->debug("don't initialize queue - we're slimservice or scanner or already initialized");
+	if ( %scanQueue || main::SCANNER ) {
+		main::DEBUGLOG && $log->debug("don't initialize queue - we're the scanner or already initialized");
 		return;
 	}
 	
@@ -724,7 +720,7 @@ sub initScanQueue {
 }
 
 sub nextScanTask {
-	return if main::SLIM_SERVICE || main::SCANNER || __PACKAGE__->stillScanning;
+	return if main::SCANNER || __PACKAGE__->stillScanning;
 	
 	my @keys = keys %scanQueue;
 	
@@ -738,11 +734,15 @@ sub nextScanTask {
 	main::DEBUGLOG && $log->is_debug && $log->debug('remaining scans in queue:' . Data::Dump::dump(%scanQueue));
 }
 
+sub hasScanTask {
+	scalar keys %scanQueue ? 1 : 0;
+}
+
 sub queueScanTask {
 	my ($class, $request) = @_;
 	
-	if ( main::SLIM_SERVICE || main::SCANNER || !$request || $request->isNotCommand([['wipecache', 'rescan']]) ) {
-		$log->error('do not add scan, we are slimservice or scanner or there is no valid request');
+	if ( main::SCANNER || !$request || $request->isNotCommand([['wipecache', 'rescan']]) ) {
+		$log->error('do not add scan, we are the scanner or there is no valid request');
 		return;
 	}
 
@@ -782,6 +782,8 @@ sub queueScanTask {
 		# wipecache removes all existing rescans from the queue
 		$class->clearScanQueue;
 
+		# remove the queue flag, or this task will never be run, but queued up again
+		$request->deleteParam('_queue');
 		$scanQueue{wipecache} = $request->virginCopy();
 	}
 	else {

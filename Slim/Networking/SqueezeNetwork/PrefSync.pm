@@ -58,7 +58,7 @@ sub _init_done {
 	# Sync all connected clients with SN
 	# New clients will be handled by clientEvent
 	for my $client ( Slim::Player::Client::clients() ) {
-		next unless $client->isa('Slim::Player::Squeezebox2') && $client->deviceid !~ /^(?:3|6|8|11|12)/;
+		next unless $client->isa('Slim::Player::Squeezebox2') && $client->deviceid < 11 && $client->deviceid !~ /^(?:3|6|8|11|12)/;
 		
 		Slim::Utils::Timers::setTimer(
 			$client,
@@ -373,7 +373,7 @@ sub prefEvent {
 	my $request = shift;
 	my $client  = $request->client;
 	
-	if ( !defined $client || !$client->isa('Slim::Player::Squeezebox2') || $client->deviceid =~ /^(?:3|6|8|11|12)/ ) {
+	if ( $client && !$client->isa('Slim::Player::Squeezebox2') ) {
 		return;
 	}
 	

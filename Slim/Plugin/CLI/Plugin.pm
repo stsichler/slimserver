@@ -66,11 +66,10 @@ my $log = Slim::Utils::Log->addLogCategory({
 
 my $prefs = preferences('plugin.cli');
 
-if ( !main::SLIM_SERVICE ) {
-	$prefs->migrate(1, sub {
-		$prefs->set('cliport', Slim::Utils::Prefs::OldPrefs->get('cliport') || 9090); 1;
-	});
-}
+$prefs->migrate(1, sub {
+	require Slim::Utils::Prefs::OldPrefs;
+	$prefs->set('cliport', Slim::Utils::Prefs::OldPrefs->get('cliport') || 9090); 1;
+});
 
 $prefs->setValidate({ 'validator' => 'intlimit', 'low' => 1024, 'high' => 65535 }, 'cliport');
 $prefs->setChange(\&Slim::Plugin::CLI::Plugin::cli_socket_change, 'cliport');
@@ -110,13 +109,11 @@ sub initPlugin {
 	# open our socket
 	cli_socket_change();
 
-	if ( !main::SLIM_SERVICE ) {
-		# register handlers for discovery packets
-		Slim::Networking::Discovery::addTLVHandler({
-			'CLIA' => sub { $::cliaddr },          # cli address
-			'CLIP' => sub { $cli_socket_port },    # cli port
-		});
-	}
+	# register handlers for discovery packets
+	Slim::Networking::Discovery::addTLVHandler({
+		'CLIA' => sub { $::cliaddr },          # cli address
+		'CLIP' => sub { $cli_socket_port },    # cli port
+	});
 }
 
 # plugin: name of our plugin
@@ -234,7 +231,7 @@ sub cli_socket_accept {
 	if ($client_socket && $client_socket->connected && $client_socket->peeraddr) {
 
 		# Check max connections
-		if ( !main::SLIM_SERVICE && scalar keys %connections >= $prefsServer->get('tcpConnectMaximum') ) {
+		if ( scalar keys %connections >= $prefsServer->get('tcpConnectMaximum') ) {
 
 			$log->error("Warning: Closing connection: too many connections open! (" . scalar( keys %connections ) . ")" );
 		
@@ -246,8 +243,14 @@ sub cli_socket_accept {
 		my $tmpaddr = inet_ntoa($client_socket->peeraddr);
 
 		# Check allowed hosts
-		
-		if (!($prefsServer->get('filterHosts')) || (Slim::Utils::Network::isAllowedHost($tmpaddr))) {
+		if ( !Slim::Utils::Network::ip_is_host($tmpaddr)
+			&& $prefsServer->get('protectSettings') && !$prefsServer->get('authorize')
+			&& ( Slim::Utils::Network::ip_is_gateway($tmpaddr) || Slim::Utils::Network::ip_on_different_network($tmpaddr) )
+		) {
+			$log->error("Access to CLI is restricted to the local network or localhost: $tmpaddr");
+			$cli_socket->close;
+		}
+		elsif (!($prefsServer->get('filterHosts')) || (Slim::Utils::Network::isAllowedHost($tmpaddr))) {
 
 			Slim::Networking::Select::addRead($client_socket, \&client_socket_read);
 			Slim::Networking::Select::addError($client_socket, \&client_socket_close);
@@ -460,11 +463,6 @@ sub client_socket_write {
 		$log->info("$connections{$client_socket}{'id'} - Sending response [$msg...]");
 	}
 	
-	if ( main::SLIM_SERVICE && $connections{$client_socket}{want_len} ) {
-		# Prepend length of message on SN so we can verify on the web side that we received the whole message
-		$message = 'LEN' . pack('N', length($message)) . $message;
-	}
-	
 	$sentbytes = send($client_socket, $message, 0);
 
 	unless (defined($sentbytes)) {
@@ -582,21 +580,14 @@ sub cli_process {
 	if (!defined $cmd && $request->isStatusNotDispatchable()) {
 		$cmd = $arrayRef->[0];	
 	}
-	
-	if ( main::SLIM_SERVICE && $request->getParam('_want_len') ) {
-		# Client wants length prefix on response
-		$connections{$client_socket}{want_len} = 1;
-	}
 
 	# give the command a client if it misses one
 	if ($request->isStatusNeedsClient()) {
 	
 		# Never assign a random client on SN
-		if ( !main::SLIM_SERVICE ) {
-			$client = Slim::Player::Client::clientRandom();
-			$clientid = blessed($client) ? $client->id() : undef;
-			$request->clientid($clientid);
-		}
+		$client = Slim::Player::Client::clientRandom();
+		$clientid = blessed($client) ? $client->id() : undef;
+		$request->clientid($clientid);
 		
 		if (main::INFOLOG && $log->is_info) {
 

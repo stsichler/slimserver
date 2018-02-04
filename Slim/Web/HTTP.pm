@@ -53,26 +53,6 @@ use Slim::Web::JSONRPC;
 use Slim::Web::Cometd;
 use Slim::Utils::Prefs;
 
-BEGIN {
-	# Use Cookie::XS if available
-	my $hasCookieXS;
-
-	sub hasCookieXS {
-		# Bug 9830, disable Cookie::XS for now as it has a bug
-		return 0;
-		
-		return $hasCookieXS if defined $hasCookieXS;
-
-		$hasCookieXS = 0;
-		eval {
-			require Cookie::XS;
-			$hasCookieXS = 1;
-		};
-
-		return $hasCookieXS;
-	}
-}
-
 use constant HALFYEAR	 => 60 * 60 * 24 * 180;
 
 use constant METADATAINTERVAL => 32768;
@@ -356,7 +336,7 @@ sub processHTTP {
 
 		my $reason = $httpClient->reason || 'unknown error reading request';
 		
-		if ( main::INFOLOG && $isDebug ) {
+		if ( main::INFOLOG && $log->is_info ) {
 			$log->info("Client at $peeraddr{$httpClient}:" . $httpClient->peerport . " disconnected. ($reason)");
 		}
 
@@ -365,7 +345,7 @@ sub processHTTP {
 	}
 	
 
-	if ( main::DEBUGLOG && $isDebug ) {
+	if ( main::INFOLOG && $log->is_info ) {
 		$log->info(
 			"HTTP request: from $peeraddr{$httpClient}:" . $httpClient->peerport . " ($httpClient) for " .
 			join(' ', ($request->method(), $request->protocol(), $request->uri()))
@@ -379,7 +359,6 @@ sub processHTTP {
 	# this will hold our context and is used to fill templates
 	my $params = {};
 	$params->{'userAgent'} = $request->header('user-agent');
-	$params->{'browserType'} = $skinMgr->detectBrowser($request);
 
 	# this bundles up all our response headers and content
 	my $response = HTTP::Response->new();
@@ -504,7 +483,7 @@ sub processHTTP {
 				my $csrfAuth = $2;
 
 				if ( main::DEBUGLOG && $isDebug ) {
-					$log->info("Found CSRF auth token \"$csrfAuth\" in URI \"" . $uri . "\", so resetting request URI to \"$plainURI\"");
+					$log->debug("Found CSRF auth token \"$csrfAuth\" in URI \"" . $uri . "\", so resetting request URI to \"$plainURI\"");
 				}
 
 				# change the URI so later code doesn't "see" the cauth part
@@ -515,25 +494,10 @@ sub processHTTP {
 			}
 		}
 		
-		# Dont' process cookies for graphics
-		if ($path && $path !~ m/(gif|png)$/i) {
+		# Dont' process cookies for graphics, stylesheets etc.
+		if ($path && $path !~ m/(?:gif|png|jpe?g|css)$/i && $path !~ m{^/(?:music/[a-f\d]+/cover|imageproxy/.*/image)} ) {
 			if ( my $cookie = $request->header('Cookie') ) {
-				if ( hasCookieXS() ) {
-					# Parsing cookies this way is about 8x faster than using CGI::Cookie directly
-					my $cookies = Cookie::XS->parse($cookie);
-					$params->{'cookies'} = {
-						map {
-							$_ => bless {
-								name  => $_,
-								path  => '/',
-								value => $cookies->{ $_ },
-							}, 'CGI::Cookie';
-						} keys %{ $cookies }
-					};
-				}
-				else {
-					$params->{'cookies'} = { CGI::Cookie->parse($cookie) };
-				}
+				$params->{'cookies'} = { CGI::Cookie->parse($cookie) };
 			}
 		}
 		
@@ -637,13 +601,9 @@ sub processHTTP {
 
 			$params->{'webroot'} = '/';
 
-			if ($path =~ s{^/slimserver/}{/}i) {
-				$params->{'webroot'} = "/slimserver/"
-			}
-
 			$path =~ s|^/+||;
 
-			if ( !main::WEBUI || $path =~ m{^(?:html|music|video|image|plugins|apps|settings|firmware|clixmlbrowser|imageproxy)/}i || Slim::Web::Pages->isRawDownload($path) ) {
+			if ( !main::WEBUI || $path =~ m{^(?:html|music|video|image|plugins|apps|settings|firmware|clixmlbrowser|index\.html|imageproxy)/}i || Slim::Web::Pages->isRawDownload($path) ) {
 				# not a skin
 
 			} elsif ($path =~ m|^([a-zA-Z0-9]+)$| && $skinMgr->isaSkin($1)) {
@@ -687,7 +647,7 @@ sub processHTTP {
 					
 					# throw 404
 					$params->{'suggestion'} = qq(There is no "$desiredskin")
-						. qq( skin, try ) . Slim::Utils::Prefs::homeURL() . qq( instead.);
+						. qq( skin, try ) . Slim::Utils::Network::serverURL() . qq( instead.);
 
 					if ( $log->is_warn ) {
 						$log->warn("Invalid skin requested: [" . join(' ', ($request->method, $request->uri)) . "]");
@@ -707,17 +667,6 @@ sub processHTTP {
 			$params->{"path"} = Slim::Utils::Misc::unescape($path);
 			$params->{"host"} = $request->header('Host');
 		} 
-		
-		# BUG: 4911 detect Internet Explorer and redirect if using the Nokia770 skin, as IE will not support the styles
-		# Touch is similar in most ways and works nicely with IE
-		# BUG: 5093 make sure that Nokia Opera isn't spoofing as IE, causing incorrect redirect
-
-		if ($params->{'browserType'} =~ /^IE\d?$/ &&
-		($params->{'skinOverride'} || $prefs->get('skin')) eq 'Nokia770') 
-		{
-			main::DEBUGLOG && $isDebug && $log->debug("Internet Explorer Detected with Nokia Skin, redirecting to Touch");
-			$params->{'skinOverride'} = 'Touch';
-		}
 
 		if ( main::WEBUI && $csrfProtectionLevel ) {
 			# apply CSRF protection logic to "dangerous" commands
@@ -756,7 +705,7 @@ sub processHTTP {
 	}
 	
 	if ( main::DEBUGLOG && $isDebug ) {
-		$log->info(
+		$log->debug(
 			"End request: keepAlive: [" .
 			($keepAlives{$httpClient} || '') .
 			"] - waiting for next request for $httpClient on connection = " . ($response->header('Connection') || '') . "\n"
@@ -987,7 +936,7 @@ sub generateHTTPResponse {
 		$contentType = 'application/octet-stream';
 	}
 	
-	if ( $path =~ /(?:music|video|image)\/[0-9a-f]+\/download/ ) {
+	if ( $path =~ /(?:music|video|image)\/[0-9a-f]+\/(?:download|cover)/ || $path =~ /^imageproxy\// ) {
 		# Avoid generating templates for download URLs
 		$contentType = 'application/octet-stream';
 	}
@@ -1014,22 +963,46 @@ sub generateHTTPResponse {
 		);
 	}
 
-	main::INFOLOG && $log->is_info && $log->info("Generating response for ($type, $contentType) $path");
-
-	# some generally useful form details...
 	my $classOrCode = Slim::Web::Pages->getPageFunction($path);
+	
+	# protect access to settings pages: only allow from local network
+	if ( main::WEBUI 
+		&& !Slim::Utils::Network::ip_is_host($peeraddr{$httpClient}) 
+		&& $prefs->get('protectSettings') && !$prefs->get('authorize') 
+		&& $classOrCode && !ref $classOrCode && $classOrCode->isa('Slim::Web::Settings') 
+		&& ( Slim::Utils::Network::ip_is_gateway($peeraddr{$httpClient}) || Slim::Utils::Network::ip_on_different_network($peeraddr{$httpClient}) )
+	) {
+		my $hostIP = Slim::Utils::IPDetect::IP();
+		$log->error("Access to settings pages is restricted to the local network or localhost: $peeraddr{$httpClient} -> $hostIP ($path)");
+
+		$response->code(RC_FORBIDDEN);
+
+		$body = filltemplatefile('html/errors/403.html', $params);
+
+		return prepareResponseForSending(
+			$client,
+			$params,
+			$body,
+			$httpClient,
+			$response,
+		);
+	}
+
+	main::INFOLOG && $log->is_info && $log->info("Generating response for ($type, $contentType) $path");
 	
 	if (defined($client) && $classOrCode) {
 		$params->{'player'} = $client->id();
 		$params->{'myClientState'} = $client;
 		
-		# save the player id in a cookie
-		my $cookie = CGI::Cookie->new(
-			-name    => 'Squeezebox-player',
-			-value   => $params->{'player'},
-			-expires => '+1y',
-		);
-		$response->headers->push_header( 'Set-Cookie' => $cookie );
+		if ( $path !~ m{(?:^progress\.|settings/)} ) {
+			# save the player id in a cookie
+			my $cookie = CGI::Cookie->new(
+				-name    => 'Squeezebox-player',
+				-value   => $params->{'player'},
+				-expires => '+1y',
+			);
+			$response->headers->push_header( 'Set-Cookie' => $cookie );
+		}
 	}
 
 	# this might do well to break up into methods
@@ -1046,8 +1019,12 @@ sub generateHTTPResponse {
 		$response->expires( time() + $max );
 		$response->header('Cache-Control' => 'max-age=' . $max);
 	}
+	elsif ( $path !~ m{^(?:music|imageproxy)/} ) {
+		$params->{'browserType'} = $skinMgr->detectBrowser($response->request);
+	}
 
-	if ($contentType =~ /text/ && $path !~ /(?:json|memoryusage)/) {
+	# XXX - this is no longer being used by any of the stock skins
+	if ($contentType =~ /text/ && $contentType !~ /(?:css|javascript)/ && $path !~ /(?:json|memoryusage)/) {
 
 		$params->{'params'} = {};
 
@@ -1104,7 +1081,7 @@ sub generateHTTPResponse {
 			
 			$params->{'imageproxy'} = Slim::Networking::SqueezeNetwork->url(
 				"/public/imageproxy"
-			);
+			) if !main::NOMYSB;
 
 			main::PERFMON && (my $startTime = AnyEvent->time);
 
@@ -1214,13 +1191,12 @@ sub generateHTTPResponse {
 		# return quickly with a 404 if web UI is disabled
 		} elsif ( !main::WEBUI && (
 			   $path =~ /status\.m3u/
-			|| $path =~ /status\.txt/
 			|| $path =~ /(server|scanner|perfmon|log)\.(?:log|txt)/
 		) ) {
 			$response->content_type('text/html');
 			$response->code(RC_NOT_FOUND);
 		
-			$body = filltemplatefile('html/errors/404.html', $params);
+			$$body = "<h1>404 Not Found: $path</h1><p>Logitech Media Server web UI is not available in --noweb mode.</p>";
 		
 			return prepareResponseForSending(
 				$client,
@@ -1230,6 +1206,44 @@ sub generateHTTPResponse {
 				$response,
 			);
 
+		} elsif ($path =~ /music\/(-[0-9a-f]+)\/download/) {
+			my $obj = Slim::Schema->find('Track', $1);
+			
+			# our download code can't handle the volatile files directly - let's fake a local file here
+			if (blessed($obj) && Slim::Music::Info::isVolatile($obj->url)) {
+				my $handler = Slim::Player::ProtocolHandlers->handlerForURL($obj->url);
+				
+				my $url = Slim::Utils::Misc::fileURLFromPath($handler->pathFromFileURL($obj->url));
+				
+				my $tmpObj = Slim::Schema::RemoteTrack->updateOrCreate($url, {
+					content_type => Slim::Music::Info::typeFromPath($url)
+				});
+
+				main::INFOLOG && $log->is_info && $log->info("Disabling keep-alive for large file download");
+				delete $keepAlives{$httpClient};
+				Slim::Utils::Timers::killTimers( $httpClient, \&closeHTTPSocket );
+				$response->header( Connection => 'close' );
+
+				if ( blessed($tmpObj) && $tmpObj->id && downloadMusicFile($httpClient, $response, $tmpObj->id) ) {
+					return 0;
+				}
+			}
+
+			# 404 error
+			$log->is_warn && $log->warn("unable to find file for path: $path");
+
+			$response->content_type('text/html');
+			$response->code(RC_NOT_FOUND);
+
+			$body = filltemplatefile('html/errors/404.html', $params);
+
+			return prepareResponseForSending(
+				$client,
+				$params,
+				$body,
+				$httpClient,
+				$response,
+			);
 		} elsif ($path =~ /(?:music|video|image)\/([0-9a-f]+)\/download/) {
 			# Bug 10730
 			my $id = $1;
@@ -1271,13 +1285,15 @@ sub generateHTTPResponse {
 		} elsif ($path =~ /(server|scanner|perfmon|log)\.(?:log|txt)/) {
 
 			if ( main::WEBUI ) {
-				($contentType, $body) = Slim::Web::Pages::Common->logFile($params, $response, $1);
-			}
-		
-		} elsif ($path =~ /status\.txt/) {
-
-			if ( main::WEBUI ) {
-				($contentType, $body) = Slim::Web::Pages::Common->statusTxt($client, $httpClient, $response, $params, $p);
+				$body = Slim::Web::Pages::Common->logFile($httpClient, $params, $response, $1);
+				
+				if ($body) {
+					$contentType = 'text/html';
+				}
+				else {
+					# when the full file is requested, then all the streaming is handled in the logFile call. Nothing is returned.
+					return 0 unless $contentType;
+				}
 			}
 		
 		} elsif ($path =~ /status\.m3u/) {
@@ -1355,8 +1371,8 @@ sub generateHTTPResponse {
 			}
 			
 		} elsif ( $path =~ /anyurl/ ) {
-			main::DEBUGLOG && $log->is_debug && $log->debug('anyurl - parameters processed, return dummy content to prevent 404');
-			$$body = 'anyurl processed';
+			main::DEBUGLOG && $log->is_debug && $log->debug('anyurl - parameters processed, redirect to status page if needed');
+			$body = filltemplatefile('xmlbrowser_redirect.html', $params);
 			
 		} else {
 			# who knows why we're here, we just know that something ain't right
@@ -1379,17 +1395,6 @@ sub generateHTTPResponse {
 
 		# Set the body to nothing, so the length() check won't fail.
 		$$body = "";
-	}
-
-	# Tell the browser not to reload the playlist unless it's changed.
-	# XXXX - not fully baked. Need more testing.
-	if (0 && !defined $mtime && defined $client && ref($client->currentPlaylistRender())) {
-
-		$mtime = $client->currentPlaylistRender()->[0] || undef;
-
-		if (defined $mtime) {
-			$response->expires($mtime + 60);
-		}
 	}
 
 	# Create an ETag based on the mtime, file size and inode of the
@@ -1424,7 +1429,7 @@ sub generateHTTPResponse {
 
 	# treat js.html differently - need the html ending to have it processed by TT,
 	# but browser should consider it javascript
-	if ( $path =~ /js(?:-browse)?\.html/i) {
+	if ( $path =~ /js(?:|-\S*)\.html/i ) {
 		$contentType = 'application/x-javascript';
 	}
 
@@ -2546,9 +2551,9 @@ sub checkAuthorization {
 sub addCloseHandler{
 	my $funcPtr = shift;
 	
-	if ( main::INFOLOG && $log->is_info ) {
+	if ( main::DEBUGLOG && $log->is_debug ) {
 		my $funcName = Slim::Utils::PerlRunTime::realNameForCodeRef($funcPtr);
-		$log->info("Adding Close handler: $funcName");
+		$log->debug("Adding Close handler: $funcName");
 	}
 	
 	push @closeHandlers, $funcPtr;
@@ -2651,7 +2656,10 @@ sub downloadMusicFile {
 		my $isHead = $response->request->method eq 'HEAD';
 		
 		if ( my ($outFormat) = $uri =~ m{download\.([^\?]+)} ) {				
-			$outFormat = 'flc' if $outFormat eq 'flac';
+			# if the file extension itself is no valid content type, try to figure it out
+			if ( !Slim::Music::Info::isSong(undef, $outFormat) ) {
+				$outFormat = Slim::Music::Info::typeFromSuffix($uri);
+			}
 			
 			if ( $obj->content_type ne $outFormat ) {
 				if ( main::TRANSCODING ) {

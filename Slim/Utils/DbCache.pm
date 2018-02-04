@@ -146,30 +146,36 @@ sub close {
 	$self->_close_db;
 }
 
+# The following function is mostly borrowed from Cache::BaseCache
+
+# map of expiration formats to their respective time in seconds
+my %_Expiration_Units = ( map(($_,             1), qw(s second seconds sec)),
+                          map(($_,            60), qw(m minute minutes min)),
+                          map(($_,         60*60), qw(h hour hours)),
+                          map(($_,      60*60*24), qw(d day days)),
+                          map(($_,    60*60*24*7), qw(w week weeks)),
+                          map(($_,   60*60*24*30), qw(M month months)),
+                          map(($_,  60*60*24*365), qw(y year years)) );
+
+# turn a string in the form "[number] [unit]" into an explicit number
+# of seconds from the present.  E.g, "10 minutes" returns "600"
 sub _canonicalize_expiration_time {
 	my ( $expiry ) = @_;
 	
-	# see below - 'never' would crash 
-	return -1 if $expiry eq 'never' || $expiry eq '-1';
-	
-	if ( $expiry && $expiry !~ /^[\-]*\d+$/ ) {
-		# Not a number, need to canonicalize it
-		# sometimes this fails on existing code, eg. with 'never'?
-		$expiry = eval { 
-			require Cache::BaseCache;
-			Cache::BaseCache::Canonicalize_Expiration_Time($expiry)
-		};
-		
-		if ($@) {
-			require Slim::Utils::Log;
-			Slim::Utils::Log::logBacktrace($@);
-			Slim::Utils::Log->logger('server')->error('Falling back to default expiry time: ' . DEFAULT_EXPIRES_TIME);
-			
-			$expiry = DEFAULT_EXPIRES_TIME;
-		}
-		
-		# Canonicalize_Expiration_Time would return seconds for eg. 3 months - always add current time
-		$expiry += time() if $expiry >= 0;
+	if ( lc( $expiry ) eq 'now' ) {
+		$expiry = 0;
+	}
+	elsif ( lc( $expiry ) eq 'never' ) {
+		$expiry = -1;
+	}
+	elsif ( $expiry =~ /^\s*([+-]?(?:\d+|\d*\.\d*))\s*$/ ) {
+		$expiry = $1;
+	}
+	elsif ( $expiry =~ /^\s*([+-]?(?:\d+|\d*\.\d*))\s*(\w*)\s*$/ && $_Expiration_Units{ $2 } ) {
+		$expiry = ( $_Expiration_Units{ $2 } ) * $1;
+	}
+	else {
+		$expiry = DEFAULT_EXPIRES_TIME;
 	}
 
 	# "If value is less than 60*60*24*30 (30 days), time is assumed to be
@@ -180,7 +186,6 @@ sub _canonicalize_expiration_time {
 	
 	return $expiry;
 }
-
 
 sub _get_dbfile {
 	my $self = shift;
@@ -199,6 +204,9 @@ sub _get_dbfile {
 	return catfile( $self->{root}, $namespace . '.db' );
 }
 
+# only try to re-build once
+my $rebuilt;
+
 sub _init_db {
 	my $self  = shift;
 	my $retry = shift;
@@ -216,16 +224,37 @@ sub _init_db {
 			RaiseError => 1,
 			sqlite_use_immediate_transaction => 1,
 		} );
+
+		# caches do see a lot of updates/writes/deletes - enable auto_vacuum
+		if ( !$dbh->selectrow_array('PRAGMA auto_vacuum') ) {
+			$dbh->do('PRAGMA auto_vacuum = FULL');
+			# XXX - running a vacuum automatically might take a long time on larger cache files
+			# only enable auto_vacuum when a file is newly created
+			#$dbh->do('VACUUM');
+		}
 		
 		$dbh->do('PRAGMA synchronous = OFF');
 		$dbh->do('PRAGMA journal_mode = WAL');
 		# scanner is heavy on writes, server on reads - tweak accordingly
 		$dbh->do('PRAGMA wal_autocheckpoint = ' . (main::SCANNER ? 10000 : 200));
 
-		require Slim::Utils::Prefs;
+		my ($dbhighmem, $dbjournalsize);
+		if (main::RESIZER) {
+			require Slim::Utils::Light;
+			$dbhighmem = Slim::Utils::Light::getPref('dbhighmem');
+			$dbjournalsize = Slim::Utils::Light::getPref('dbjournalsize');
+		}
+		else {
+			require Slim::Utils::Prefs;
+			my $prefs = Slim::Utils::Prefs::preferences('server');
+			$dbhighmem = $prefs->get('dbhighmem');
+			$dbjournalsize = $prefs->get('dbjournalsize');
+		}
+
+		$dbh->do('PRAGMA journal_size_limit = ' . ($dbjournalsize * 1024 * 1024)) if defined $dbjournalsize;
 	
 		# Increase cache size when using dbhighmem, and reduce it to 300K otherwise
-		if ( Slim::Utils::Prefs::preferences('server')->get('dbhighmem') ) {
+		if ( $dbhighmem ) {
 			$dbh->do('PRAGMA cache_size = 20000');
 			$dbh->do('PRAGMA temp_store = MEMORY');
 		}
@@ -253,6 +282,9 @@ sub _init_db {
 		
 		warn "$@Delete the file $dbfile and start from scratch.\n";
 		
+		# Make sure cachedir exists
+		Slim::Utils::Prefs::makeCacheDir() unless main::RESIZER;
+		
 		# Something was wrong with the database, delete it and try again
 		unlink $dbfile;
 		
@@ -263,9 +295,24 @@ sub _init_db {
 	$dbh->{HandleError} = sub {
 		my ($msg, $handle, $value) = @_;
 
+		my $dbfile = $self->_get_dbfile;
+		
 		require Slim::Utils::Log;
-		Slim::Utils::Log::logError($msg);
-		Slim::Utils::Log::logError($self->_get_dbfile);
+		Slim::Utils::Log::logBacktrace($msg);
+		Slim::Utils::Log::logError($dbfile);
+		
+		if ( $msg =~ /SQLite.*(?:database disk image is malformed|is not a database)/i ) {
+			# we've already tried to recover - give up
+			if ($rebuilt++) {
+				Slim::Utils::Log::logError("Please stop the server, delete $dbfile and restart.");
+			}
+			else {
+				Slim::Utils::Log::logError("Trying to re-build $dbfile from scratch.");
+				$self->close();
+				unlink $dbfile;
+				$self->_init_db(1);
+			}
+		}
 	};
 	
 	# Prepare statements we need

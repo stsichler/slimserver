@@ -48,6 +48,7 @@ use constant STATISTICS   => 0;
 use constant SB1SLIMP3SYNC=> 0;
 use constant WEBUI        => 0;
 use constant LOCALFILE    => 0;
+use constant NOMYSB       => 1;
 
 # load these later, don't need them right now
 require File::Path;
@@ -57,7 +58,7 @@ require Getopt::Long;
 require Slim::Utils::OSDetect;
 require Slim::Utils::Light;
 
-our $VERSION = '7.8.1';
+our $VERSION = '7.9.1';
 
 BEGIN {
 	if (ISWINDOWS) {

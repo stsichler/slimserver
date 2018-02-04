@@ -1,6 +1,14 @@
 package Slim::Plugin::Deezer::ProtocolHandler;
 
-# $Id$
+# Logitech Media Server Copyright 2001-2016 Logitech.
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License,
+# version 2.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 
 use strict;
 use base qw(Slim::Player::Protocols::HTTP);
@@ -106,6 +114,37 @@ sub isRepeatingStream {
 	my ( undef, $song ) = @_;
 	
 	return $song->track()->url =~ /\.dzr$/;
+}
+
+sub explodePlaylist {
+	my ( $class, $client, $url, $cb ) = @_;
+	
+	my $tracks = [];
+
+	if ( $url =~ m{^deezer://((?:playlist|album):[0-9a-z]+)}i ) {
+		my $id = $1;
+		
+		Slim::Networking::SqueezeNetwork->new(
+			sub {
+				my $http = shift;
+				my $tracks = eval { from_json( $http->content ) };
+				$cb->($tracks || []);
+			},
+			sub {
+				$cb->([])
+			},
+			{
+				client => $client
+			}
+		)->get(
+			Slim::Networking::SqueezeNetwork->url(
+				'/api/deezer/v1/playback/getTracksForID?id=' . uri_escape_utf8($id),
+			)
+		);
+	}
+	else {
+		$cb->([$url])
+	}
 }
 
 # Check if player is allowed to skip, using canSkip value from SN
@@ -504,6 +543,7 @@ sub trackInfoURL {
 }
 
 # Track Info menu
+=pod XXX - legacy track info menu from before Slim::Menu::TrackInfo times?
 sub trackInfo {
 	my ( $class, $client, $track ) = @_;
 	
@@ -524,6 +564,7 @@ sub trackInfo {
 	
 	$client->modeParam( 'handledTransition', 1 );
 }
+=cut
 
 # Metadata for a URL, used by CLI/JSON clients
 sub getMetadataFor {
@@ -535,6 +576,7 @@ sub getMetadataFor {
 		my $song = $client->currentSongForUrl($url);
 		if (!$song || !($url = $song->pluginData('radioTrackURL'))) {
 			return {
+				title     => ($url && $url =~ /flow\.dzr/) ? $client->string('PLUGIN_DEEZER_FLOW') : $client->string('PLUGIN_DEEZER_SMART_RADIO'),
 				bitrate   => '320k CBR',
 				type      => 'MP3 (Deezer)',
 				icon      => $icon,
@@ -705,45 +747,5 @@ sub getIcon {
 
 	return Slim::Plugin::Deezer::Plugin->_pluginDataFor('icon');
 }
-
-# SN only, re-init upon reconnection
-sub reinit { if ( main::SLIM_SERVICE ) {
-	my ( $class, $client, $song ) = @_;
-	
-	# Reset song duration/progress bar
-	my $url = $song->track->url();
-	
-	main::DEBUGLOG && $log->is_debug && $log->debug("Re-init Deezer - $url");
-	
-	my $cache     = Slim::Utils::Cache->new;
-	my ($trackId) = $url =~ m{deezer://(.+)\.mp3};
-	my $meta      = $cache->get( 'deezer_meta_' . $trackId );
-	
-	if ( $meta ) {			
-		# Back to Now Playing
-		Slim::Buttons::Common::pushMode( $client, 'playlist' );
-	
-		# Reset song duration/progress bar
-		if ( $meta->{duration} ) {
-			$song->duration( $meta->{duration} );
-			
-			# On a timer because $client->currentsongqueue does not exist yet
-			Slim::Utils::Timers::setTimer(
-				$client,
-				Time::HiRes::time(),
-				sub {
-					my $client = shift;
-				
-					$client->streamingProgressBar( {
-						url      => $url,
-						duration => $meta->{duration},
-					} );
-				},
-			);
-		}
-	}
-	
-	return 1;
-} }
 
 1;

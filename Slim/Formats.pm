@@ -9,7 +9,9 @@ package Slim::Formats;
 
 use strict;
 use base qw(Class::Data::Inheritable);
-	
+
+use Audio::Scan;
+
 use Slim::Music::Info;
 use Slim::Utils::Log;
 use Slim::Utils::Misc;
@@ -77,6 +79,11 @@ sub init {
 		'xpf' => 'Slim::Formats::Playlists::XSPF',
 	);
 
+	if ($Audio::Scan::VERSION =~ /^0\.9[45]$/) {
+		$tagClasses{'dff'} = 'Slim::Formats::DFF';
+		$tagClasses{'dsf'} = 'Slim::Formats::DSF';
+	}
+
 	$init = 1;
 
 	return 1;
@@ -100,7 +107,7 @@ sub loadTagFormatForType {
 	eval "use $tagClasses{$type}";
 	
 	if ( $@ ) {
-		logBacktrace("Couldn't load module: $tagClasses{$type} : [$@]");
+		logBacktrace("Couldn't load module: $tagClasses{$type} ($type) : [$@]");
 		return 0;
 	}
 	
@@ -129,6 +136,8 @@ sub classForFormat {
 Read and return the tags for any file we're handed.
 
 =cut
+
+my %tagCache;
 
 sub readTags {
 	my $class = shift;
@@ -238,7 +247,7 @@ sub readTags {
 
 	if (-e $filepath) {
 		# cache the file size & date
-		($tags->{'FILESIZE'}, $tags->{'TIMESTAMP'}) = (stat($filepath))[7,9];
+		($tags->{'FILESIZE'}, $tags->{'TIMESTAMP'}) = (stat(_))[7,9];
 	}
 
 	# Only set if we couldn't read it from the file.
@@ -254,10 +263,14 @@ sub readTags {
 	while (my ($tag, $value) = each %{$tags}) {
 
 		if (defined $value) {
+			my $original = $value;
 
 			use bytes;
+			if ( my $cached = $tagCache{$value} ) {
+				$tags->{$tag} = $cached;
+				next;
 
-			if (ref($value) eq 'ARRAY') {
+			} elsif (ref($value) eq 'ARRAY') {
 
 				for (my $i = 0; $i < scalar @{$value}; $i++) {
 
@@ -293,9 +306,15 @@ sub readTags {
 				}
 				$tags->{$tag} = $value;
 			}
+
+			$tagCache{$original} = $value;
 		}
 		
 		main::DEBUGLOG && $isDebug && $value && $log->debug(". $tag : $value");
+	}
+			
+	if (scalar (keys %tagCache) > 50) {
+		%tagCache = ();
 	}
 
 	return $tags;
