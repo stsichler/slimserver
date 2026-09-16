@@ -10,8 +10,8 @@ use strict;
 use base qw(Slim::Player::Protocols::HTTP);
 
 use File::Temp ();
+use Audio::Scan;
 
-use Slim::Formats;
 use Slim::Utils::Cache;
 use Slim::Utils::Errno;
 use Slim::Utils::Log;
@@ -224,6 +224,39 @@ sub scanUrl {
 	$args->{cb}->($args->{song}->currentTrack());
 }
 
+
+# Formats we can determine the bitrate of on the fly
+my %AUDIO_SCAN_FORMAT = (
+	mp3 => [ mp3  => \&_scanMP3Info ],
+	wav => [ wav  => \&_scanPCMInfo ],
+	aif => [ aif  => \&_scanPCMInfo ],
+	ogg => [ ogg  => \&_scanVorbisInfo ],
+	ops => [ opus => \&_scanVorbisInfo ],
+);
+
+sub _scanMP3Info {
+	my $info = shift;
+	return ( $info->{bitrate}, $info->{vbr} );
+}
+
+sub _scanPCMInfo {
+	my $info = shift;
+	return ( $info->{bitrate}, 0 );
+}
+
+sub _scanVorbisInfo {
+	my $info = shift;
+
+	my $vbr = 0;
+	if ( defined $info->{bitrate_upper} && defined $info->{bitrate_lower} ) {
+		$vbr = $info->{bitrate_upper} != $info->{bitrate_lower} ? 1 : 0;
+	}
+
+	my $bitrate = $info->{bitrate_average} || $info->{bitrate_nominal};
+
+	return ( $bitrate, $vbr );
+}
+
 sub _scanBitrateInit {
 	my $self = shift;
 
@@ -239,25 +272,25 @@ sub _scanBitrateInit {
 	return 0 if Slim::Music::Info::getBitrate( $song->currentTrack->url );
 
 	my $type = Slim::Music::Info::contentType( $song->currentTrack->url ) || return 0;
-	my $formatClass = Slim::Formats->classForFormat($type) || return 0;
-	return 0 unless Slim::Formats->loadTagFormatForType($type) && $formatClass->can('scanBitrate');
+	my $format = $AUDIO_SCAN_FORMAT{$type} || return 0;
 
 	# all preconditions met, so start scanning on the fly
 
 	main::DEBUGLOG && $log->is_debug && $log->debug( 'Scanning ' . $song->currentTrack->url . ' on the fly for bitrate' );
 
 	return {
-		fh          => File::Temp->new,
-		len         => 0,
-		scanLen     => SCAN_READ_BYTES,
-		url         => $song->currentTrack->url,
-		type        => $type,
-		formatClass => $formatClass,
+		fh        => File::Temp->new,
+		len       => 0,
+		scanLen   => SCAN_READ_BYTES,
+		url       => $song->currentTrack->url,
+		type      => $type,
+		asFormat  => $format->[0],
+		extractor => $format->[1],
 	};
 }
 
 # Tees received data into a temp file until enough has been buffered
-# (or the stream ends) to run it through the format's scanBitrate().
+# (or the stream ends) to run it through Audio::Scan->scan_fh().
 # This is similar to Slim::Utils::Scanner::Remote::parseAudioStream(), but
 # we won't open a separate connection for this.
 sub _scanBitrateFeed {
@@ -300,20 +333,34 @@ sub _scanBitrateFeed {
 	# enough data buffered (or stream ended) - scan once and stop
 	${*$self}{'_bitrateScan'} = 0;
 
-	my ( $bitrate, $vbr ) = eval { $scan->{formatClass}->scanBitrate( $scan->{fh}, $scan->{url} ) };
+	$scan->{fh}->seek( 0, 0 );
+
+	# we only want the bitrate here, not tags or embedded artwork
+	local $ENV{AUDIO_SCAN_NO_ARTWORK} = 1;
+
+	my $info = eval { Audio::Scan->scan_fh( $scan->{asFormat}, $scan->{fh} )->{info} };
+
+	my ( $bitrate, $vbr );
 
 	if ( $@ ) {
 		$log->error("Unable to scan bitrate for $scan->{url}: $@");
 	}
-	elsif ( $bitrate && $bitrate > 0 ) {
+	elsif ( $info ) {
+		( $bitrate, $vbr ) = $scan->{extractor}->($info);
+	}
+
+	if ( $bitrate && $bitrate > 0 ) {
 		main::DEBUGLOG && $log->is_debug && $log->debug("Scanned bitrate for $scan->{url}: $bitrate");
 
 		Slim::Music::Info::setBitrate( $scan->{url}, $bitrate, $vbr );
 		if ( my $song = ${*$self}{'song'} ) {
 			$song->bitrate($bitrate);
 		}
-		if ( !Slim::Music::Info::getDuration( $scan->{url} ) && ( my $cl = $self->contentLength ) ) {
-			Slim::Music::Info::setDuration( $scan->{url}, ( $cl * 8 ) / $bitrate );
+		# Update the playlist time so the web will refresh, etc
+		# this is copied from Slim::Plugin::RemoteLibrary::ProtocolHandler::_gotMetadata
+		if ( my $client = ${*$self}{'client'} ) {
+			$client->currentPlaylistUpdateTime( Time::HiRes::time() );
+			Slim::Control::Request::notifyFromArray( $client, ['newmetadata'] );
 		}
 	}
 }
@@ -373,7 +420,7 @@ sub getMetadataFor {
 	# support Icy Metadata updates
 	my $title = Slim::Music::Info::getCurrentTitle( $client, $url );
 
-	# may reflect a bitrate/duration determined on the fly (see _scanBitrateFeed)
+	# may reflect a bitrate determined on the fly (see _scanBitrateFeed)
 	my $bitrate = Slim::Music::Info::getCurrentBitrate($url) || 0;
 	my $duration = Slim::Music::Info::getDuration($url) || 0;
 
